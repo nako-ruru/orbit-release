@@ -1,8 +1,18 @@
 workflows:
-  macos-build:
-    name: test
+  macos-vnc-test:
+    name: macOS Remote GUI Manual Test
     instance_type: mac_mini_m1
+    max_build_duration: 60 # 允许构建最多跑 60 分钟
     scripts:
       - name: 运行安装脚本
         script: |
+          # 如果你把脚本换了地方，记得把这里改成对应的路径（如 python3 script/test_darwin_arm64.py）
           python3 test.py
+
+      - name: Hold instance for testing (VNC)
+        script: |
+          echo "========================================================"
+          echo "安装脚本执行完毕！已经进入测试等待阶段，请在 Codemagic 网页端开启 VNC 连接！"
+          echo "========================================================"
+          # 强制卡住系统 45 分钟（2700秒），留够时间让你远程登录上去看效果和手动点击
+          sleep 2700
