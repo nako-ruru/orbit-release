@@ -1,0 +1,8 @@
+workflows:
+  macos-build:
+    name: test
+    instance_type: mac_mini_m1
+    scripts:
+      - name: 运行安装脚本
+        script: |
+          python3 test.py
