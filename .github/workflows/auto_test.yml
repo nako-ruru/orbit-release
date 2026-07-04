@@ -10,7 +10,6 @@ jobs:
     name: 自动化测试 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
 
-    # 核心：定义矩阵，一行代码直接召唤 3 台官方托管的服务器
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
@@ -18,39 +17,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 针对 Linux 环境的特殊处理：补齐截图所需的虚拟显示器和依赖
+      # 针对 Linux 环境的特殊处理：补齐截图所需的虚拟显示器和完整的 Webview 依赖
       - name: (仅Linux) 准备图形依赖环境
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y scrot xvfb
+          sudo apt-get install -y scrot xvfb libwebkit2gtk-4.1-dev libgtk-3-dev
 
-      - name: 1. 执行安装脚本
-        # 统一使用 bash 语法，方便做跨平台判断
-        shell: bash
-        run: |
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            # Linux 必须包裹在 xvfb-run 后面执行，否则主程序会因为找不到显示器崩溃
-            xvfb-run python test-install.py
-          else
-            python test-install.py
-          fi
+      # 1. 执行安装脚本（通过 if 条件隔离环境，Windows 走原生环境杜绝挂起）
+      - name: 1. 执行安装脚本 (Windows / macOS)
+        if: matrix.os != 'ubuntu-latest'
+        run: python test-install.py
 
+      - name: 1. 执行安装脚本 (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: xvfb-run python test-install.py
+
+      # 2. 休息 2 分钟等待程序拉起及稳定
       - name: 2. 休息 2 分钟等待程序拉起及稳定
         run: python -c "import time; time.sleep(120)"
 
+      # 3. 初始化内网诊断链路
       - name: 3. 初始化内网诊断链路
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      - name: 4. 分析测试结果
-        shell: bash
-        run: |
-          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
-            xvfb-run python analyze-test-result.py
-          else
-            python analyze-test-result.py
-          fi
+      # 4. 分析测试结果
+      - name: 4. 分析测试结果 (Windows / macOS)
+        if: matrix.os != 'ubuntu-latest'
+        run: python analyze-test-result.py
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+
+      - name: 4. 分析测试结果 (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: xvfb-run python analyze-test-result.py
         env:
           RELEASE_TAG: ${{ github.ref_name }}
