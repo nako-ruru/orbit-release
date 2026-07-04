@@ -4,11 +4,6 @@ workflows:
     instance_type: mac_mini_m1
     max_build_duration: 60 # 允许构建最多跑 60 分钟
     scripts:
-      - name: 运行安装脚本
-        script: |
-          # 如果你把脚本换了地方，记得把这里改成对应的路径（如 python3 script/test_darwin_arm64.py）
-          python3 test.py
-
       - name: Hold instance for testing (VNC)
         script: |
           echo "========================================================"

@@ -1,0 +1,27 @@
+name: 纯自动化看图测试
+
+on: [push, workflow_dispatch]
+
+jobs:
+  automation-test:
+    runs-on: windows-latest # 也可以切换为 ubuntu-latest 或你的 self-hosted 节点
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 1. 执行安装脚本
+        run: python test-install.py
+
+      - name: 2. 休息 2 分钟等待程序拉起及稳定
+        run: python -c "import time; time.sleep(120)"
+
+      - name: 3. 初始化内网诊断链路
+        uses: tailscale/github-action@v4
+        with:
+          # 需要去 Tailscale 控制台生成一个 Auth Key，并录入到 GitHub 项目的 Settings -> Secrets 中
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: 4. 分析测试结果
+        run: python analyze-test-result.py
+        env:
+          # 自动获取当前推送的 Tag 或是分支名，无缝传递给 Python 脚本
+          RELEASE_TAG: ${{ github.ref_name }}
