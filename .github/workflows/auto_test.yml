@@ -3,7 +3,7 @@ name: 纯自动化全平台测试
 on: [push, workflow_dispatch]
 
 env:
-  PYTHONUTF8: 1 # 强行让所有平台的 Python 统一支持中文输出
+  PYTHONUTF8: 1 # 全局开启 Python 的 UTF-8 强流模式
 
 jobs:
   automation-test:
@@ -17,41 +17,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 针对 Linux 环境的特殊处理：补齐截图所需的虚拟显示器和完整的 Webview 依赖
-      - name: (仅Linux) 准备图形依赖环境
+      # ------------------ Linux 专属：构建常驻虚拟桌面 ------------------
+      - name: (仅Linux) 开启常驻虚拟显示器
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y scrot xvfb libwebkit2gtk-4.1-dev libgtk-3-dev
+          # 在后台悄悄启动一个 1080P 的虚拟屏幕
+          Xvfb :99 -screen 0 1920x1080x24 &
+          # 将 DISPLAY 挂载到 GitHub 全局环境变量中，后续所有步骤自动继承
+          echo "DISPLAY=:99" >> $GITHUB_ENV
 
-      # 1. 执行安装脚本（通过 if 条件隔离环境，Windows 走原生环境杜绝挂起）
-      - name: 1. 执行安装脚本 (Windows / macOS)
-        if: matrix.os != 'ubuntu-latest'
+      # ------------------ 核心测试流水线（全平台原生一致） ------------------
+      - name: 1. 执行安装脚本
         run: python test-install.py
 
-      - name: 1. 执行安装脚本 (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: xvfb-run python test-install.py
-
-      # 2. 休息 2 分钟等待程序拉起及稳定
       - name: 2. 休息 2 分钟等待程序拉起及稳定
         run: python -c "import time; time.sleep(120)"
 
-      # 3. 初始化内网诊断链路
       - name: 3. 初始化内网诊断链路
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      # 4. 分析测试结果
-      - name: 4. 分析测试结果 (Windows / macOS)
-        if: matrix.os != 'ubuntu-latest'
+      - name: 4. 分析测试结果
         run: python analyze-test-result.py
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-
-      - name: 4. 分析测试结果 (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: xvfb-run python analyze-test-result.py
         env:
           RELEASE_TAG: ${{ github.ref_name }}
