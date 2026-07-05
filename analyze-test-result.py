@@ -98,7 +98,7 @@ def force_wake_orbit_ui():
         return
 
     print("\n" + "=" * 20 + " 🚀 Orbit 进程唤醒机制测试 " + "=" * 20)
-    target_path = r"C:\Program Files\Orbit\orbit.exe"
+    target_path = r"C:\Orbit\orbit.exe"
 
     if not os.path.exists(target_path):
         print(f"❌ 未找到可执行文件路径: {target_path}")
