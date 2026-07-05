@@ -5,6 +5,7 @@ import sys
 import urllib.request
 import psutil
 import time
+import glob
 
 # === 配置区 ===
 WEBDAV_BASE_URL = "http://100.113.111.18:20002/opt/orbit-test/assets"
@@ -98,33 +99,49 @@ def check_webview2_installed():
     return False
 
 
-def force_wake_orbit_ui():
-    """方向二：无参数二次拉起，尝试唤醒并前置现有进程"""
-    if sys.platform != "win32":
+def fix_and_relaunch_orbit():
+    print("\n" + "=" * 20 + " 🛠️ 强制注入 WebView2 环境并重试 " + "=" * 20)
+
+    # 1. 去 Choco 的默认释放路径下搜寻 msedgewebview2.exe 的实际深层目录
+    choco_wv2_base = r"C:\Program Files (x86)\Microsoft\EdgeWebView\Application"
+    pattern = os.path.join(choco_wv2_base, "*", "msedgewebview2.exe")
+    found_paths = glob.glob(pattern)
+
+    if not found_paths:
+        print("❌ 严重错误: 在磁盘上依然找不到 msedgewebview2.exe！环境彻底丢失。")
         return
 
-    print("\n" + "=" * 20 + " 🚀 Orbit 进程唤醒机制测试 " + "=" * 20)
-    target_path = r"C:\Orbit\orbit.exe"
+    # 拿到包含 msedgewebview2.exe 的那个版本号文件夹路径
+    webview2_dir = os.path.dirname(found_paths[0])
+    print(f"🎯 成功在盘符定位到 WebView2 运行库: {webview2_dir}")
 
-    if not os.path.exists(target_path):
-        print(f"❌ 未找到可执行文件路径: {target_path}")
-        return
+    # 2. 乱刀砍掉当前处于“无窗体活死人”状态的旧 orbit 进程，防止单实例锁死
+    print("⏳ 正在清理旧的无响应目标进程...")
+    for proc in psutil.process_iter(['name']):
+        try:
+            if proc.info['name'] and proc.info['name'].lower() in ["orbit.exe"]:
+                proc.kill()
+                print(f"   💥 已击杀旧进程: {proc.info['name']}")
+        except Exception:
+            pass
 
-    print("正在强行以【无参数】模式再次拉起 orbit.exe...")
+    time.sleep(2)  # 等待释放句柄
+
+    # 3. 核心大招：强行注入微软官方认可的最高优先级环境变量
+    os.environ["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = webview2_dir
+    print(f"🚀 已注入环境变量: WEBVIEW2_BROWSER_EXECUTABLE_FOLDER = {webview2_dir}")
+
+    # 4. 以最纯净的无参数模式，直接拉起主程序
+    target_exe = r"C:\Orbit\orbit.exe"
+    print(f"🎬 正在以全新环境（带参数）拉起: {target_exe}")
     try:
-        # 拉起第二个纯洁实例
-        p = subprocess.Popen([target_path])
-        # 给单实例唤醒机制 5 秒的跨进程通信时间
-        time.sleep(5)
-
-        # 检查第二个实例是否如预期般“通信完就立刻自杀”
-        return_code = p.poll()
-        if return_code is not None:
-            print(f"ℹ️ 唤醒实例已退出（Return Code: {return_code}）。这说明单实例唤醒逻辑已被成功触发！")
-        else:
-            print("⚠️ 警告: 第二个实例仍在运行，这可能意味着之前的实例并没有成功建立单实例 IPC 监听槽。")
+        # 🌟 将参数作为列表的第二个元素传入
+        subprocess.Popen([target_exe, "--register-autostart"], env=os.environ)
+        print("⏳ 等待 15 秒让 WebView2 引擎充分初始化并完成窗体渲染...")
+        time.sleep(15)
     except Exception as e:
-        print(f"❌ 尝试拉起唤醒实例时发生异常: {e}")
+        print(f"❌ 拉起失败: {e}")
+
     print("=" * 60 + "\n")
 
 
@@ -213,9 +230,11 @@ if __name__ == "__main__":
     # 在你的分析逻辑开始前，先给进程做个体检
     verify_orbit_processes()
 
+    if sys.platform == "win32":
+        fix_and_relaunch_orbit()
+
     # 2. 注入新加入的两个方向排查
     check_webview2_installed()
-    force_wake_orbit_ui()
 
     sys_os, arch = get_system_info()
 
