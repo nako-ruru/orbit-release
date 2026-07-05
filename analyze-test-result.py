@@ -7,7 +7,7 @@ import psutil
 import time
 
 # === 配置区 ===
-WEBDAV_BASE_URL = "http://100.113.111.18:20002/opt/orbit-test"
+WEBDAV_BASE_URL = "http://100.113.111.18:20002/opt/orbit-test/assets"
 
 # 从环境变量获取 release-tag，如果读取不到则默认为 'dev'
 # 你可以在 GitHub Actions 中设置环境变量： env: RELEASE_TAG: ${{ github.ref_name }}

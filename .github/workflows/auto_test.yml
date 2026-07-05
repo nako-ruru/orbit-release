@@ -30,7 +30,7 @@ jobs:
       - name: 准备 Python 审计依赖
         run: pip install psutil
 
-# 1. 强制同步安装 WebView2 运行环境
+# 🎯 强行同步安装 WebView2 并刺穿 Session 0 隔离墙
       - name: (Windows Only) Force Synchronous WebView2 Runtime Installation
         if: matrix.os == 'windows-latest'
         shell: powershell
@@ -38,17 +38,20 @@ jobs:
           Write-Host "Starting WebView2 deployment via Chocolatey..."
           choco install webview2-runtime -y --no-progress
           
-          # 动态寻找到具体的版本号文件夹路径
           $wv2Path = Resolve-Path "C:\Program Files (x86)\Microsoft\EdgeWebView\Application\*\msedgewebview2.exe" | Select-Object -First 1
           if ($wv2Path) {
               $wv2Dir = Split-Path -Parent $wv2Path.Path
               Write-Host "Found WebView2 Core Directory: $wv2Dir"
               
-              # 🌟 核心魔法：将环境变量写入 GitHub Actions 全局环境，接下来的所有 Step 都会自动继承它
+              # 1. 之前已成功的核心路径
               echo "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=$wv2Dir" >> $env:GITHUB_ENV
-              Write-Host "Successfully injected WEBVIEW2_BROWSER_EXECUTABLE_FOLDER to GITHUB_ENV."
+              
+              # 2. 🌟 核心大招：强制 WebView2 绕过 GPU 硬件加速，改用软件合成器（Software Compositor）
+              echo "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--disable-gpu --disable-software-rasterizer --headless" >> $env:GITHUB_ENV
+              
+              Write-Host "Successfully injected all WebView2 CI environments to GITHUB_ENV."
           } else {
-              Write-Error "Failed to locate msedgewebview2.exe after installation!"
+              Write-Error "Failed to locate msedgewebview2.exe!"
               exit 1
           }
 
@@ -57,7 +60,7 @@ jobs:
         run: python test-install.py
 
       - name: 2. 休息 2 分钟等待程序拉起及稳定
-        run: python -c "import time; time.sleep(60)"
+        run: python -c "import time; time.sleep(15)"
 
       - name: 3. 初始化内网诊断链路
         uses: tailscale/github-action@v4
