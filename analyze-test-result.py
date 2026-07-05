@@ -130,10 +130,10 @@ def fix_and_relaunch_orbit():
     if not os.path.exists(target_exe):
         target_exe = r"C:\Program Files\Orbit\orbit.exe"  # 兼容你的旧路径
 
-    print(f"🎬 正在以全新环境拉起: {target_exe}")
+    print(f"🎬 正在以全新环境（带参数）拉起: {target_exe}")
     try:
-        # 不阻塞，让它在后台跑
-        subprocess.Popen([target_exe], env=os.environ)
+        # 🌟 将参数作为列表的第二个元素传入
+        subprocess.Popen([target_exe, "--register-autostart"], env=os.environ)
         print("⏳ 等待 15 秒让 WebView2 引擎充分初始化并完成窗体渲染...")
         time.sleep(15)
     except Exception as e:
