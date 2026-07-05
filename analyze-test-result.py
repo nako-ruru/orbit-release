@@ -127,10 +127,6 @@ def fix_and_relaunch_orbit():
 
     time.sleep(2)  # 等待释放句柄
 
-    # 3. 核心大招：强行注入微软官方认可的最高优先级环境变量
-    os.environ["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = webview2_dir
-    print(f"🚀 已注入环境变量: WEBVIEW2_BROWSER_EXECUTABLE_FOLDER = {webview2_dir}")
-
     # 4. 以最纯净的无参数模式，直接拉起主程序
     target_exe = r"C:\Orbit\orbit.exe"
     print(f"🎬 正在以全新环境（带参数）拉起: {target_exe}")
