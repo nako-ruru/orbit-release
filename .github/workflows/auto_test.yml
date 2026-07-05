@@ -6,6 +6,7 @@ env:
   PYTHONUTF8: 1 # 全局开启 Python 的 UTF-8 强流模式
 
 jobs:
+  # ==================== 任务一：多端自动化测试矩阵 ====================
   automation-test:
     name: 自动化测试 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -17,18 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ------------------ Linux 专属：构建常驻虚拟桌面 ------------------
       - name: (仅Linux) 开启常驻虚拟显示器
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y scrot xvfb libwebkit2gtk-4.1-dev libgtk-3-dev
-          # 在后台悄悄启动一个 1080P 的虚拟屏幕
           Xvfb :99 -screen 0 1920x1080x24 &
-          # 将 DISPLAY 挂载到 GitHub 全局环境变量中，后续所有步骤自动继承
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
-      # ------------------ 核心测试流水线（全平台原生一致） ------------------
       - name: 1. 执行安装脚本
         run: python test-install.py
 
@@ -44,3 +41,20 @@ jobs:
         run: python analyze-test-result.py
         env:
           RELEASE_TAG: ${{ github.ref_name }}
+
+  # ==================== 任务二：流水分支合并后的单次收尾 ====================
+  finalize-verification:
+    name: 自动化测试收尾与状态同步
+    needs: automation-test # 严格依赖：必须等上面三个系统全部成功亮绿勾，才会触发这里
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 连接内网诊断链路
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: 触发资产状态同步事件
+        run: |
+          curl "http://100.113.111.18:1337/api/StartAction" \
+            --json '{"bindingId": "thumbsup-generate"}'
