@@ -3,6 +3,8 @@ import platform
 import subprocess
 import sys
 import urllib.request
+import psutil
+import time
 
 # === 配置区 ===
 WEBDAV_BASE_URL = "http://100.113.111.18:20002/opt/orbit-test"
@@ -10,15 +12,6 @@ WEBDAV_BASE_URL = "http://100.113.111.18:20002/opt/orbit-test"
 # 从环境变量获取 release-tag，如果读取不到则默认为 'dev'
 # 你可以在 GitHub Actions 中设置环境变量： env: RELEASE_TAG: ${{ github.ref_name }}
 RELEASE_TAG = os.environ.get("RELEASE_TAG", "dev")
-
-# 确保安装了 psutil，如果没有，在 CI 里可以提早 pip install psutil
-try:
-    import psutil
-except ImportError:
-    print("正在为测试环境自动安装 psutil...")
-    os.system(f"{sys.executable} -m pip install psutil")
-    import psutil
-
 
 def verify_orbit_processes():
     # 我们要捕获的目标核心关键字（不带后缀，全小写）
@@ -65,6 +58,71 @@ def verify_orbit_processes():
 
     print("=" * 67 + "\n")
 
+
+# 只有 Windows 平台才导入注册表模块
+if sys.platform == "win32":
+    import winreg
+
+
+def check_webview2_installed():
+    """方向一：跨平台/Windows专项：检测 WebView2 运行库是否存在"""
+    if sys.platform != "win32":
+        return True
+
+    print("\n" + "=" * 20 + " 🍏 WebView2 环境深度审计 " + "=" * 20)
+    # WebView2 Runtime 在注册表中的标准 Evergreen GUID
+    wv2_guid = r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}"
+    wv2_guid_user = r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}"
+
+    version = None
+    # 1. 检查全机（System-wide）
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, wv2_guid)
+        version, _ = winreg.QueryValueEx(key, "pv")
+        print(f"🎉 状态确认: 系统已全局安装 WebView2 Runtime，版本号: {version}")
+    except Exception:
+        # 2. 检查当前用户（User-level）
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, wv2_guid_user)
+            version, _ = winreg.QueryValueEx(key, "pv")
+            print(f"🎉 状态确认: 当前用户下已安装 WebView2 Runtime，版本号: {version}")
+        except Exception:
+            print("❌ 🚨 抓到真凶: 注册表中未检测到任何 WebView2 Runtime！")
+            print("   └─ 这会导致 Orbit 的 WebView 引擎因找不到底层渲染器而无法初始化窗体！")
+            return False
+    return True
+
+
+def force_wake_orbit_ui():
+    """方向二：无参数二次拉起，尝试唤醒并前置现有进程"""
+    if sys.platform != "win32":
+        return
+
+    print("\n" + "=" * 20 + " 🚀 Orbit 进程唤醒机制测试 " + "=" * 20)
+    target_path = r"C:\Program Files\Orbit\orbit.exe"
+
+    if not os.path.exists(target_path):
+        print(f"❌ 未找到可执行文件路径: {target_path}")
+        return
+
+    print("正在强行以【无参数】模式再次拉起 orbit.exe...")
+    try:
+        # 拉起第二个纯洁实例
+        p = subprocess.Popen([target_path])
+        # 给单实例唤醒机制 5 秒的跨进程通信时间
+        time.sleep(5)
+
+        # 检查第二个实例是否如预期般“通信完就立刻自杀”
+        return_code = p.poll()
+        if return_code is not None:
+            print(f"ℹ️ 唤醒实例已退出（Return Code: {return_code}）。这说明单实例唤醒逻辑已被成功触发！")
+        else:
+            print("⚠️ 警告: 第二个实例仍在运行，这可能意味着之前的实例并没有成功建立单实例 IPC 监听槽。")
+    except Exception as e:
+        print(f"❌ 尝试拉起唤醒实例时发生异常: {e}")
+    print("=" * 60 + "\n")
+
+
 def get_system_info():
     """获取格式化后的系统和架构名称"""
     sys_os = platform.system().lower()  # windows, linux, darwin
@@ -108,10 +166,10 @@ def take_screenshot(name):
             # Linux 使用 scrot 截图
             subprocess.run(["scrot", name], check=True)
 
-        print(f"成功生成本地截图: {name}")
+        print(f"成功生成本地结果: {name}")
         return True
     except Exception as e:
-        print(f"本地截图失败: {e}", file=sys.stderr)
+        print(f"本地结果失败: {e}", file=sys.stderr)
         return False
 
 
@@ -149,6 +207,10 @@ def upload_to_webdav(local_file, remote_filename):
 if __name__ == "__main__":
     # 在你的分析逻辑开始前，先给进程做个体检
     verify_orbit_processes()
+
+    # 2. 注入新加入的两个方向排查
+    check_webview2_installed()
+    force_wake_orbit_ui()
 
     sys_os, arch = get_system_info()
 

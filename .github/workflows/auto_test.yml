@@ -26,6 +26,22 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
+      # 🎯 核心修正：在全平台网络都 100% 干净时，提前把 psutil 乱刀装好
+      - name: 准备 Python 审计依赖
+        run: pip install psutil
+
+# 🎯 新增步骤：为 Windows Server 强制补齐 WebView2 运行环境
+      - name: (仅Windows) 静默安装 WebView2 Runtime
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          print "正在从微软官方下载 WebView2 静默安装包..."
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile "MicrosoftEdgeWebview2Setup.exe"
+          print "正在执行静默安装..."
+          Start-Process -FilePath ".\MicrosoftEdgeWebview2Setup.exe" -ArgumentList "/silent", "/install" -Wait
+          print "WebView2 安装完成！"
+
+
       - name: 1. 执行安装脚本
         run: python test-install.py
 
