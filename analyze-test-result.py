@@ -65,32 +65,31 @@ if sys.platform == "win32":
 
 
 def check_webview2_installed():
-    """方向一：跨平台/Windows专项：检测 WebView2 运行库是否存在"""
     if sys.platform != "win32":
         return True
 
     print("\n" + "=" * 20 + " 🍏 WebView2 环境深度审计 " + "=" * 20)
-    # WebView2 Runtime 在注册表中的标准 Evergreen GUID
-    wv2_guid = r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}"
-    wv2_guid_user = r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}"
 
-    version = None
-    # 1. 检查全机（System-wide）
-    try:
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, wv2_guid)
-        version, _ = winreg.QueryValueEx(key, "pv")
-        print(f"🎉 状态确认: 系统已全局安装 WebView2 Runtime，版本号: {version}")
-    except Exception:
-        # 2. 检查当前用户（User-level）
+    # 同时扫描 64位原生路径 和 32位重定向路径
+    paths_to_check = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}"),
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}")
+    ]
+
+    for hkey, subkey in paths_to_check:
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, wv2_guid_user)
+            key = winreg.OpenKey(hkey, subkey)
             version, _ = winreg.QueryValueEx(key, "pv")
-            print(f"🎉 状态确认: 当前用户下已安装 WebView2 Runtime，版本号: {version}")
+            print(f"🎉 状态确认: 成功在注册表抓到 WebView2 Runtime! 版本号: {version}")
+            print("=" * 60 + "\n")
+            return True
         except Exception:
-            print("❌ 🚨 抓到真凶: 注册表中未检测到任何 WebView2 Runtime！")
-            print("   └─ 这会导致 Orbit 的 WebView 引擎因找不到底层渲染器而无法初始化窗体！")
-            return False
-    return True
+            continue
+
+    print("❌ 🚨 注册表未检测到 WebView2 路径。")
+    return False
 
 
 def force_wake_orbit_ui():
