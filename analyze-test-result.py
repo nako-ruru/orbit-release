@@ -5,7 +5,6 @@ import sys
 import urllib.request
 import psutil
 import time
-import glob
 
 # === 配置区 ===
 WEBDAV_BASE_URL = "http://100.113.111.18:20002/opt/orbit-test"
@@ -66,30 +65,36 @@ if sys.platform == "win32":
 
 
 def check_webview2_installed():
-    if sys.platform != "win32":
-        return True
-
     print("\n" + "=" * 20 + " 🍏 WebView2 环境深度审计 " + "=" * 20)
 
-    # 同时扫描 64位原生路径 和 32位重定向路径
-    paths_to_check = [
-        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}"),
-        (winreg.HKEY_LOCAL_MACHINE,
-         r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}"),
-        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}")
-    ]
+    # 优先检查：是否已经通过硬核环境变量指定了免注册表路径
+    ci_env_path = os.environ.get("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER")
+    if ci_env_path and os.path.exists(ci_env_path):
+        print(f"🎉 状态确认: 检测到硬核环境变量注入成功！")
+        print(f"   └─ 正在通过免注册表路径运行: {ci_env_path}")
+        print("=" * 60 + "\n")
+        return True
 
-    for hkey, subkey in paths_to_check:
-        try:
-            key = winreg.OpenKey(hkey, subkey)
-            version, _ = winreg.QueryValueEx(key, "pv")
-            print(f"🎉 状态确认: 成功在注册表抓到 WebView2 Runtime! 版本号: {version}")
-            print("=" * 60 + "\n")
-            return True
-        except Exception:
-            continue
+    # 其次检查：传统的 Windows 注册表（保留作为兜底）
+    if sys.platform == "win32":
+        paths_to_check = [
+            (
+            winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}"),
+            (winreg.HKEY_LOCAL_MACHINE,
+             r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9478C2F}")
+        ]
+        for hkey, subkey in paths_to_check:
+            try:
+                key = winreg.OpenKey(hkey, subkey)
+                version, _ = winreg.QueryValueEx(key, "pv")
+                print(f"🎉 状态确认: 成功在注册表抓到 WebView2 Runtime! 版本号: {version}")
+                print("=" * 60 + "\n")
+                return True
+            except Exception:
+                continue
 
-    print("❌ 🚨 注册表未检测到 WebView2 路径。")
+    print("❌ 🚨 警告: 注册表与环境变量均未检测到有效的 WebView2 引擎！")
+    print("=" * 60 + "\n")
     return False
 
 
