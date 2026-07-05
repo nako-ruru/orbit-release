@@ -37,6 +37,12 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
+      # 🎯 新增步骤：强行杀掉 Tailscale 的前端 UI 进程，保留后台网络服务
+      - name: (仅Windows) 清理 Tailscale GUI 弹窗防止遮挡
+        if: matrix.os == 'windows-latest'
+        run: taskkill /f /im tailscale-ipn.exe || exit 0
+        shell: cmd
+
       - name: 4. 分析测试结果
         run: python analyze-test-result.py
         env:
