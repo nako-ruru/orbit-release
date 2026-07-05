@@ -30,17 +30,20 @@ jobs:
       - name: 准备 Python 审计依赖
         run: pip install psutil
 
-# 🎯 新增步骤：为 Windows Server 强制补齐 WebView2 运行环境
+# 🎯 强制补齐 Windows Server 缺失的 WebView2 核心渲染引擎
       - name: (仅Windows) 静默安装 WebView2 Runtime
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
-          print "正在从微软官方下载 WebView2 静默安装包..."
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile "MicrosoftEdgeWebview2Setup.exe"
-          print "正在执行静默安装..."
+          Write-Host "正在从微软官方下载 WebView2 独立安装包..."
+          $sourceUrl = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+          Invoke-WebRequest -Uri $sourceUrl -OutFile "MicrosoftEdgeWebview2Setup.exe"
+          
+          Write-Host "正在拉起底层进程执行静默安装..."
+          # /silent /install 是微软官方常青版独立安装包的标准静默参数
           Start-Process -FilePath ".\MicrosoftEdgeWebview2Setup.exe" -ArgumentList "/silent", "/install" -Wait
-          print "WebView2 安装完成！"
-
+          
+          Write-Host "🎉 WebView2 Runtime 部署完毕！"
 
       - name: 1. 执行安装脚本
         run: python test-install.py
