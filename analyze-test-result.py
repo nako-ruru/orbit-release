@@ -93,54 +93,6 @@ def check_webview2_installed():
     return False
 
 
-def fix_and_relaunch_orbit():
-    print("\n" + "=" * 20 + " 🛠️ 强制注入 WebView2 环境并重试 " + "=" * 20)
-
-    # 1. 去 Choco 的默认释放路径下搜寻 msedgewebview2.exe 的实际深层目录
-    choco_wv2_base = r"C:\Program Files (x86)\Microsoft\EdgeWebView\Application"
-    pattern = os.path.join(choco_wv2_base, "*", "msedgewebview2.exe")
-    found_paths = glob.glob(pattern)
-
-    if not found_paths:
-        print("❌ 严重错误: 在磁盘上依然找不到 msedgewebview2.exe！环境彻底丢失。")
-        return
-
-    # 拿到包含 msedgewebview2.exe 的那个版本号文件夹路径
-    webview2_dir = os.path.dirname(found_paths[0])
-    print(f"🎯 成功在盘符定位到 WebView2 运行库: {webview2_dir}")
-
-    # 2. 乱刀砍掉当前处于“无窗体活死人”状态的旧 orbit 进程，防止单实例锁死
-    print("⏳ 正在清理旧的无响应目标进程...")
-    for proc in psutil.process_iter(['name']):
-        try:
-            if proc.info['name'] and proc.info['name'].lower() in ["orbit.exe", "orbitd.exe"]:
-                proc.kill()
-                print(f"   💥 已击杀旧进程: {proc.info['name']}")
-        except Exception:
-            pass
-
-    time.sleep(2)  # 等待释放句柄
-
-    # 3. 核心大招：强行注入微软官方认可的最高优先级环境变量
-    os.environ["WEBVIEW2_BROWSER_EXECUTABLE_FOLDER"] = webview2_dir
-    print(f"🚀 已注入环境变量: WEBVIEW2_BROWSER_EXECUTABLE_FOLDER = {webview2_dir}")
-
-    # 4. 以最纯净的无参数模式，直接拉起主程序
-    target_exe = r"C:\Orbit\orbit.exe"
-    if not os.path.exists(target_exe):
-        target_exe = r"C:\Program Files\Orbit\orbit.exe"  # 兼容你的旧路径
-
-    print(f"🎬 正在以全新环境拉起: {target_exe}")
-    try:
-        # 不阻塞，让它在后台跑
-        subprocess.Popen([target_exe], env=os.environ)
-        print("⏳ 等待 15 秒让 WebView2 引擎充分初始化并完成窗体渲染...")
-        time.sleep(15)
-    except Exception as e:
-        print(f"❌ 拉起失败: {e}")
-
-    print("=" * 60 + "\n")
-
 def force_wake_orbit_ui():
     """方向二：无参数二次拉起，尝试唤醒并前置现有进程"""
     if sys.platform != "win32":
@@ -255,9 +207,6 @@ def upload_to_webdav(local_file, remote_filename):
 if __name__ == "__main__":
     # 在你的分析逻辑开始前，先给进程做个体检
     verify_orbit_processes()
-
-    if sys.platform == "win32":
-        fix_and_relaunch_orbit()
 
     # 2. 注入新加入的两个方向排查
     check_webview2_installed()
