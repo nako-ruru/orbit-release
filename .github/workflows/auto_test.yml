@@ -30,26 +30,25 @@ jobs:
       - name: 准备 Python 审计依赖
         run: pip install psutil
 
-# 🎯 强制补齐 Windows Server 缺失的 WebView2 核心渲染引擎
-      - name: (仅Windows) 静默安装 WebView2 Runtime
+# 🎯 使用 Chocolatey 强行钉入全量 WebView2 运行环境（确保 100% 阻塞同步安装）
+      - name: (仅Windows) 强制同步安装 WebView2 Runtime
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
-          Write-Host "正在从微软官方下载 WebView2 独立安装包..."
-          $sourceUrl = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
-          Invoke-WebRequest -Uri $sourceUrl -OutFile "MicrosoftEdgeWebview2Setup.exe"
+          # 解决 PowerShell 在 GitHub Actions 里的中文输出乱码
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
           
-          Write-Host "正在拉起底层进程执行静默安装..."
-          # /silent /install 是微软官方常青版独立安装包的标准静默参数
-          Start-Process -FilePath ".\MicrosoftEdgeWebview2Setup.exe" -ArgumentList "/silent", "/install" -Wait
+          Write-Host "🚀 正在通过 Chocolatey 静默部署 WebView2 生产环境..."
+          # -y 代表自动确认，--no-progress 可以让日志更干净
+          choco install webview2-runtime -y --no-progress
           
-          Write-Host "🎉 WebView2 Runtime 部署完毕！"
+          Write-Host "🎉 检查本地环境..."
 
       - name: 1. 执行安装脚本
         run: python test-install.py
 
       - name: 2. 休息 2 分钟等待程序拉起及稳定
-        run: python -c "import time; time.sleep(120)"
+        run: python -c "import time; time.sleep(60)"
 
       - name: 3. 初始化内网诊断链路
         uses: tailscale/github-action@v4
