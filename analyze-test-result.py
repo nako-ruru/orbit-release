@@ -11,6 +11,59 @@ WEBDAV_BASE_URL = "http://100.113.111.18:20002/opt/orbit-test"
 # 你可以在 GitHub Actions 中设置环境变量： env: RELEASE_TAG: ${{ github.ref_name }}
 RELEASE_TAG = os.environ.get("RELEASE_TAG", "dev")
 
+# 确保安装了 psutil，如果没有，在 CI 里可以提早 pip install psutil
+try:
+    import psutil
+except ImportError:
+    print("正在为测试环境自动安装 psutil...")
+    os.system(f"{sys.executable} -m pip install psutil")
+    import psutil
+
+
+def verify_orbit_processes():
+    # 我们要捕获的目标核心关键字（不带后缀，全小写）
+    target_targets = {"orbit", "orbitd"}
+    found_procs = []
+
+    print("\n" + "=" * 20 + " 🧬 跨平台守护进程状态审计 " + "=" * 20)
+
+    # 遍历系统当前所有的进程
+    for proc in psutil.process_iter(['pid', 'name', 'status', 'username', 'cmdline']):
+        try:
+            p_info = proc.info
+            p_name = p_info['name']
+            if not p_name:
+                continue
+
+            # 标准化处理：转小写，并剥离 Windows 的 .exe 后缀
+            clean_name = p_name.lower().replace('.exe', '')
+
+            if clean_name in target_targets:
+                found_procs.append(p_info)
+                print(
+                    f"📌 [找到目标] PID: {p_info['pid']} | 进程名: {p_name} | 状态: {p_info['status']} | 运行用户: {p_info['username']}")
+                if p_info['cmdline']:
+                    print(f"   └─ 启动命令: {' '.join(p_info['cmdline'])}")
+
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            # 略过无权限访问或在遍历期间消亡的系统级进程
+            continue
+
+    print("-" * 67)
+    if not found_procs:
+        print("❌ 严重警告: 未找到任何运行中的 'orbit' 或 'orbitd' 进程！程序可能已崩溃或未被拉起。")
+
+        # 🧪 兜底线索：如果没找到，打印出当前系统里前 15 个最活跃的进程，看看你的程序是不是变名字了
+        print("\n🔍 正在抓取当前系统活跃进程快照（Top 15）供排查参考:")
+        count = 0
+        for proc in psutil.process_iter(['pid', 'name', 'username']):
+            if count < 15:
+                print(f"   -> PID: {proc.info['pid']} | {proc.info['name']} ({proc.info['username']})")
+                count += 1
+    else:
+        print(f"🎉 状态确认: 成功捕获到 {len(found_procs)} 个目标进程正在运行。")
+
+    print("=" * 67 + "\n")
 
 def get_system_info():
     """获取格式化后的系统和架构名称"""
@@ -82,7 +135,7 @@ def upload_to_webdav(local_file, remote_filename):
         with urllib.request.urlopen(req) as response:
             if response.status in [200, 201, 204]:
                 print("========================================")
-                print(f"🎉 截图上传成功！")
+                print(f"🎉 结果上传成功！")
                 print("========================================")
             else:
                 print(
@@ -94,6 +147,9 @@ def upload_to_webdav(local_file, remote_filename):
 
 
 if __name__ == "__main__":
+    # 在你的分析逻辑开始前，先给进程做个体检
+    verify_orbit_processes()
+
     sys_os, arch = get_system_info()
 
     # 拼接目标文件名： {release-tag}-{os}-{arch}.png
