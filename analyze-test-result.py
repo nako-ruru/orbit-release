@@ -273,9 +273,6 @@ if __name__ == "__main__":
     # 在你的分析逻辑开始前，先给进程做个体检
     verify_orbit_processes()
 
-    if sys.platform == "win32":
-        fix_and_relaunch_orbit()
-
     # 2. 注入新加入的两个方向排查
     check_webview2_installed()
     force_wake_orbit_ui()
