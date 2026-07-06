@@ -3,22 +3,14 @@ import platform
 import subprocess
 import sys
 import urllib.request
+import psutil
 
 # === 配置区 ===
-WEBDAV_BASE_URL = "http://100.113.111.18:20002/opt/orbit-test"
+WEBDAV_BASE_URL = "http://100.113.111.18:20002/opt/orbit-test/assets"
 
 # 从环境变量获取 release-tag，如果读取不到则默认为 'dev'
 # 你可以在 GitHub Actions 中设置环境变量： env: RELEASE_TAG: ${{ github.ref_name }}
 RELEASE_TAG = os.environ.get("RELEASE_TAG", "dev")
-
-# 确保安装了 psutil，如果没有，在 CI 里可以提早 pip install psutil
-try:
-    import psutil
-except ImportError:
-    print("正在为测试环境自动安装 psutil...")
-    os.system(f"{sys.executable} -m pip install psutil")
-    import psutil
-
 
 def verify_orbit_processes():
     # 我们要捕获的目标核心关键字（不带后缀，全小写）
@@ -108,10 +100,10 @@ def take_screenshot(name):
             # Linux 使用 scrot 截图
             subprocess.run(["scrot", name], check=True)
 
-        print(f"成功生成本地截图: {name}")
+        print(f"成功生成本地结果: {name}")
         return True
     except Exception as e:
-        print(f"本地截图失败: {e}", file=sys.stderr)
+        print(f"本地结果失败: {e}", file=sys.stderr)
         return False
 
 
@@ -146,10 +138,31 @@ def upload_to_webdav(local_file, remote_filename):
         print(f"WebDAV 上传失败: {e}", file=sys.stderr)
 
 
+def dump_orbit_runtime_logs():
+    print("\n" + "=" * 20 + " 📄 Orbit 运行期内部日志全量审计 " + "=" * 20)
+    log_path = r"C:\Orbit\orbit_boot.log"
+
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                if content.strip():
+                    print(content)
+                else:
+                    print("ℹ️ 抓到了日志文件，但内容为空（程序可能尚未打印任何内容）。")
+        except Exception as e:
+            print(f"❌ 读取日志文件失败: {e}")
+    else:
+        print("❌ 🚨 未找到日志文件 C:\\Orbit\\orbit_boot.log！请检查程序是否成功破壳或 init 逻辑是否触发。")
+
+    print("=" * 60 + "\n")
+
+
 if __name__ == "__main__":
+    # 💥 轰出全量日志
+    dump_orbit_runtime_logs()
     # 在你的分析逻辑开始前，先给进程做个体检
     verify_orbit_processes()
-
     sys_os, arch = get_system_info()
 
     # 拼接目标文件名： {release-tag}-{os}-{arch}.png

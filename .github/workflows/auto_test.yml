@@ -26,11 +26,15 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
+      # 🎯 核心修正：在全平台网络都 100% 干净时，提前把 psutil 乱刀装好
+      - name: 准备 Python 审计依赖
+        run: pip install psutil
+
       - name: 1. 执行安装脚本
         run: python test-install.py
 
       - name: 2. 休息 2 分钟等待程序拉起及稳定
-        run: python -c "import time; time.sleep(120)"
+        run: python -c "import time; time.sleep(15)"
 
       - name: 3. 初始化内网诊断链路
         uses: tailscale/github-action@v4
