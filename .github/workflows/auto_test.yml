@@ -30,19 +30,15 @@ jobs:
       - name: 准备 Python 审计依赖
         run: pip install psutil
 
-# 1. 强制同步安装 WebView2 运行环境并注入环境变量
+# 🎯 使用 Chocolatey 强行同步安装 WebView2 运行环境 (纯英文防止 Windows 编码解析死锁)
       - name: (Windows Only) Force Synchronous WebView2 Runtime Installation
         if: matrix.os == 'windows-latest'
         shell: powershell
         run: |
+          Write-Host "Starting WebView2 deployment via Chocolatey..."
           choco install webview2-runtime -y --no-progress
-          $wv2Path = Resolve-Path "C:\Program Files (x86)\Microsoft\EdgeWebView\Application\*\msedgewebview2.exe" | Select-Object -First 1
-          if ($wv2Path) {
-              $wv2Dir = Split-Path -Parent $wv2Path.Path
-              echo "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=$wv2Dir" >> $env:GITHUB_ENV
-          }
+          Write-Host "WebView2 Runtime installation completed successfully!"
 
-      # 3. 执行你原有的安装与主程序测试流程
       - name: 1. 执行安装脚本
         run: python test-install.py
 

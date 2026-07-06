@@ -152,7 +152,7 @@ def force_wake_orbit_ui():
         # 拉起第二个纯洁实例
         p = subprocess.Popen([target_path])
         # 给单实例唤醒机制 5 秒的跨进程通信时间
-        time.sleep(15)
+        time.sleep(5)
 
         # 检查第二个实例是否如预期般“通信完就立刻自杀”
         return_code = p.poll()
