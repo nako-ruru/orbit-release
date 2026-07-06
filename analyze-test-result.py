@@ -117,7 +117,7 @@ def fix_and_relaunch_orbit():
         # 🌟 将参数作为列表的第二个元素传入
         subprocess.Popen([target_exe, "--register-autostart"], env=os.environ)
         print("⏳ 等待 15 秒让 WebView2 引擎充分初始化并完成窗体渲染...")
-        time.sleep(15)
+        time.sleep(45)
     except Exception as e:
         print(f"❌ 拉起失败: {e}")
 
