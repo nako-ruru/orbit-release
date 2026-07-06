@@ -42,11 +42,6 @@ jobs:
               echo "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=$wv2Dir" >> $env:GITHUB_ENV
           }
 
-      # 🌟 2. 插入我们的 Python 预热与探活隔离测试
-      - name: (Windows Only) Pre-warm and Diagnose WebView2
-        if: matrix.os == 'windows-latest'
-        run: python prewarm_webview.py
-
       # 3. 执行你原有的安装与主程序测试流程
       - name: 1. 执行安装脚本
         run: python test-install.py
