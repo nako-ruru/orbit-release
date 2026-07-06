@@ -269,13 +269,8 @@ def dump_orbit_runtime_logs():
 if __name__ == "__main__":
     # 💥 轰出全量日志
     dump_orbit_runtime_logs()
-
     # 在你的分析逻辑开始前，先给进程做个体检
     verify_orbit_processes()
-
-    # 2. 注入新加入的两个方向排查
-    check_webview2_installed()
-
     sys_os, arch = get_system_info()
 
     # 拼接目标文件名： {release-tag}-{os}-{arch}.png

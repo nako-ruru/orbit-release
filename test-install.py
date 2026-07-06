@@ -54,7 +54,7 @@ url = ""
 filename = ""
 
 if sys_os == "Windows":
-    base_path = r"C:\orbit\uninstaller"
+    base_path = r"C:\Program Files\orbit\uninstaller"
     if os.path.exists(base_path + ".exe"):
         uninstaller = base_path + ".exe"
     elif os.path.exists(base_path):
@@ -107,7 +107,7 @@ except Exception as e:
 print(f"正在以 [流式阻塞模式] 启动安装程序...")
 if sys_os == "Windows":
     # 完美注入你的非交互静默安装参数
-    exec_cmd = [filename, "--silent", "--install-dir", r"C:\Orbit"]
+    exec_cmd = [filename, "--silent", "--install-dir", r"C:\Program Files\Orbit"]
 else:
     exec_cmd = ["sudo", f"./{filename}"]
 
