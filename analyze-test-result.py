@@ -109,18 +109,6 @@ def fix_and_relaunch_orbit():
     webview2_dir = os.path.dirname(found_paths[0])
     print(f"🎯 成功在盘符定位到 WebView2 运行库: {webview2_dir}")
 
-    # 2. 乱刀砍掉当前处于“无窗体活死人”状态的旧 orbit 进程，防止单实例锁死
-    print("⏳ 正在清理旧的无响应目标进程...")
-    for proc in psutil.process_iter(['name']):
-        try:
-            if proc.info['name'] and proc.info['name'].lower() in ["orbit.exe", "orbitd.exe"]:
-                proc.kill()
-                print(f"   💥 已击杀旧进程: {proc.info['name']}")
-        except Exception:
-            pass
-
-    time.sleep(2)  # 等待释放句柄
-
     # 4. 以最纯净的无参数模式，直接拉起主程序
     target_exe = r"C:\Orbit\orbit.exe"
 

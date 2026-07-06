@@ -60,7 +60,7 @@ if sys_os == "Windows":
     elif os.path.exists(base_path):
         uninstaller = base_path
 
-    url = "https://guanghe.co/download/orbit_installer_windows.exe"
+    url = "https://github.com/nako-ruru/orbit-release/releases/download/v0.5.35.prerelease/orbit_installer_windows.exe"
     filename = "orbit_installer_windows.exe"
 
 elif sys_os == "Linux":
