@@ -10,6 +10,10 @@ jobs:
   automation-test:
     name: 自动化测试 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # 🚀 核心魔法：使用 GitHub Actions 内置的三元逻辑语句
+    # 如果是 windows 开头，就赋 Windows 路径，否则赋 Linux/macOS 路径
+    env:
+      ORBIT_LOG_PATH: ${{ startsWith(matrix.os, 'windows') && 'C:\Orbit\orbit_boot.log' || '/tmp/orbit_boot.log' }}
 
     strategy:
       matrix:

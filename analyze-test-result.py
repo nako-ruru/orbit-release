@@ -140,7 +140,15 @@ def upload_to_webdav(local_file, remote_filename):
 
 def dump_orbit_runtime_logs():
     print("\n" + "=" * 20 + " 📄 Orbit 运行期内部日志全量审计 " + "=" * 20)
-    log_path = r"C:\Orbit\orbit_boot.log"
+
+    # 动态获取要读取的日志路径
+    log_path = os.environ.get("ORBIT_LOG_PATH")
+
+    if not log_path:
+        print("❌ 🚨 CI 环境未配置 ORBIT_LOG_PATH 环境变量！")
+        return
+
+    print(f"🔍 正在从目标路径读取日志: {log_path}")
 
     if os.path.exists(log_path):
         try:
@@ -153,7 +161,7 @@ def dump_orbit_runtime_logs():
         except Exception as e:
             print(f"❌ 读取日志文件失败: {e}")
     else:
-        print("❌ 🚨 未找到日志文件 C:\\Orbit\\orbit_boot.log！请检查程序是否成功破壳或 init 逻辑是否触发。")
+        print(f"❌ 🚨 未找到日志文件！请检查程序是否成功破壳或 init 逻辑是否触发。")
 
     print("=" * 60 + "\n")
 
