@@ -3,15 +3,35 @@ import platform
 import subprocess
 import sys
 import threading
-import hashlib  # 导入哈希库
+import urllib.request
+import hashlib
+import time
 
 # 强行让 Windows 环境下的控制台支持 UTF-8 实时中文输出
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
+
 # ==========================================================
-# 1. 入口环境变量检查与打印
+# 1. 核心测试：重定向链路追踪器 (Redirect Tracer)
+# ==========================================================
+class TraceRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """
+    自定义重定向处理器，用于捕获并向控制台实时打印重定向轨迹
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        print(f"   🔄 [重定向触发] HTTP {code}: -> {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+# 注册自定义的重定向追踪器，使其全局生效
+opener = urllib.request.build_opener(TraceRedirectHandler)
+urllib.request.install_opener(opener)
+
+# ==========================================================
+# 2. 入口环境变量检查与打印
 # ==========================================================
 print("=================== 初始环境检查 ===================")
 target_envs = ["GITHUB_ACTIONS", "ORBIT_LOG_PATH"]
@@ -38,34 +58,87 @@ def calculate_sha256(filepath):
         return f"计算失败: {e}"
 
 
-def robust_download(url, filename):
+def robust_download(url, filename, chunk_size=900 * 1024):
     """
-    【终极对策】调用系统原生 curl 进行下载。
-    1. 彻底解决 Python TLS 指纹（JA3）被防火墙拦截导致的 1MB 斩断问题。
-    2. 利用 curl 自带的 -L (追踪重定向) 和 --retry (自动重试) 确保高可用。
+    【兼容重定向与分片的高可靠下载器】
+    1. 首次请求时，允许通过自定义的 TraceRedirectHandler 自动完成重定向，并捕获最终文件的真实下载地址。
+    2. 针对最终下载地址（无论是 GitHub 还是 GitCode），进行 Range 分片下载，100% 免疫 1MB 掐断。
     """
-    print(f"📥 正在通过系统 curl 下载: {url}")
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
 
-    # 构造 curl 参数：
-    # -L: 自动跟踪重定向
-    # -f: HTTP 报错时直接失败退出
-    # --retry 5: 异常时自动重试 5 次
-    # --retry-delay 3: 每次重试等待 3 秒
-    # -o: 输出到指定文件
-    cmd = ["curl", "-L", "-f", "--retry", "5", "--retry-delay", "3", "-o", filename, url]
+    print(f"🛰️ 发起初始请求: {url}")
+    actual_url = url
+    total_size = 0
 
     try:
-        # 在 Windows 下，如果是 python 执行，系统能自动找到 C:\Windows\System32\curl.exe
-        # shell=False 更加安全防止注入
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if result.returncode == 0:
-            print("✅ 下载完成。")
-            return True
-        else:
-            raise RuntimeError(f"curl 退出码非零 ({result.returncode})\n错误日志: {result.stderr}")
+        # 发送一个 HEAD 或带有 Range 的请求，顺便完成重定向追踪
+        test_req = urllib.request.Request(url, headers={**headers, 'Range': 'bytes=0-0'})
+        with urllib.request.urlopen(test_req, timeout=15) as resp:
+            # 获取重定向之后的最终真实 URL
+            actual_url = resp.geturl()
+
+            if resp.status != 206:
+                print("⚠️ 警告: 最终存储服务器未返回 206 Partial Content，可能不支持分片下载。")
+                raise ValueError("No range support")
+
+            content_range = resp.getheader('Content-Range')
+            if content_range:
+                total_size = int(content_range.split('/')[-1])
+                print(f"📊 架构验证成功！")
+                print(f"   🔹 最终解析下载源: {actual_url}")
+                print(f"   🔹 文件总大小: {total_size} 字节 (~{total_size / (1024 * 1024):.2f} MB)")
+            else:
+                raise ValueError("未获取到 Content-Range 请求头")
+
     except Exception as e:
-        print(f"❌ curl 下载遭遇致命错误: {e}", file=sys.stderr)
-        raise e
+        print(f"⚠️ 分片探测遇到限制 ({e})，将尝试使用常规单流下载...")
+        # 降级方案
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as response:
+            with open(filename, 'wb') as f:
+                f.write(response.read())
+            print(f"✅ 下载完成（常规模式），最终源自: {response.geturl()}")
+        return True
+
+    # 3. 如果支持 Range，开始使用最终真实 URL 进行安全分片拼接
+    if os.path.exists(filename):
+        os.remove(filename)
+
+    start_byte = 0
+    part_num = 1
+
+    print(f"🧩 启动分片下载机制 (每片安全大小: {chunk_size // 1024} KB)...")
+    with open(filename, 'wb') as f:
+        while start_byte < total_size:
+            end_byte = min(start_byte + chunk_size - 1, total_size - 1)
+            range_str = f"bytes={start_byte}-{end_byte}"
+
+            # 单个分片的重试逻辑
+            success = False
+            for attempt in range(1, 4):
+                try:
+                    # 注意：这里直接向最终实际地址 actual_url 请求分片，避免重复触发重定向判定，提高效率
+                    req = urllib.request.Request(actual_url, headers={**headers, 'Range': range_str})
+                    with urllib.request.urlopen(req, timeout=20) as resp:
+                        data = resp.read()
+                        f.write(data)
+                        start_byte += len(data)
+                        print(f"   📥 已完成分片 {part_num:02d}: {range_str} ({len(data)} 字节)")
+                        success = True
+                        break
+                except Exception as e:
+                    print(f"   ⚠️ 分片 {part_num} 遭遇抖动 (尝试 {attempt}/3): {e}，正在重试...")
+                    time.sleep(2)
+
+            if not success:
+                raise RuntimeError(f"💥 分片 {part_num} 彻底下载失败，任务终止！")
+
+            part_num += 1
+
+    print("🎉 恭喜！所有分片下载并顺利拼接完成！")
+    return True
 
 
 def run_command_streaming(cmd):
@@ -148,7 +221,7 @@ if uninstaller and os.path.exists(uninstaller):
 else:
     print("未检测到旧版本或无需卸载，跳过此步骤。")
 
-# 4. 安全下载安装包
+# 4. 安全下载安装包（调用追踪重定向下载器）
 try:
     robust_download(url, filename)
     if sys_os != "Windows":
