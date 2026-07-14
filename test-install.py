@@ -4,39 +4,41 @@ import subprocess
 import sys
 import threading
 import urllib.request
-import hashlib  # 🚀 新增：用于计算 SHA-256
+import hashlib  # 导入哈希库
 
 # 强行让 Windows 环境下的控制台支持 UTF-8 实时中文输出
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
-# ==================== 🚀 1. 脚本入口：展示关键环境变量 ====================
-print("====== 🔍 关键环境变量审计 ======")
-env_found = False
-for var_name in ["GITHUB_ACTIONS", "ORBIT_LOG_PATH"]:
-    val = os.environ.get(var_name)
-    if val:  # 存在且不为空值
-        print(f"  [ENV] {var_name} = {val}")
-        env_found = True
-if not env_found:
-    print("  (未检测到 GITHUB_ACTIONS 或 ORBIT_LOG_PATH 环境变量)")
-print("=================================\n")
+
+# ==========================================================
+# 1. 入口环境变量检查与打印
+# ==========================================================
+print("=================== 初始环境检查 ===================")
+target_envs = ["GITHUB_ACTIONS", "ORBIT_LOG_PATH"]
+for var in target_envs:
+    val = os.environ.get(var)
+    if val is not None and val.strip() != "":
+        print(f"🌱 环境变量检测到: {var}={val}")
+    else:
+        print(f"⚠️ 环境变量未配置: {var}")
+print("====================================================\n")
 
 
-def get_file_sha256(filepath):
+def calculate_sha256(filepath):
     """
-    高效计算大文件的 SHA-256，避免一次性读入内存
+    高效计算本地文件的 SHA-256 校验和（流式读取，内存安全）
     """
     sha256_hash = hashlib.sha256()
     try:
         with open(filepath, "rb") as f:
-            # 每次读取 4096 字节
+            # 每次读取 4096 字节，防止大文件吃满内存
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
     except Exception as e:
-        return f"计算失败 ({e})"
+        return f"计算失败: {e}"
 
 
 def run_command_streaming(cmd):
@@ -64,7 +66,7 @@ def run_command_streaming(cmd):
                 pass
 
         t = threading.Thread(target=reader_thread)
-        t.daemon = True  # 设为守护线程，主线程退出时它自动消亡
+        t.daemon = True # 设为守护线程，主线程退出时它自动消亡
         t.start()
 
         # 主线程死等安装包/卸载包自身的 PID 退出，不关心它拉起的子进程
@@ -75,7 +77,7 @@ def run_command_streaming(cmd):
         return -1
 
 
-# 1. 自动识别系统与架构
+# 2. 自动识别系统与架构
 sys_os = platform.system()
 arch = platform.machine().lower()
 
@@ -110,10 +112,12 @@ else:
     print(f"不支持的操作系统: {sys_os}", file=sys.stderr)
     sys.exit(1)
 
-# 2. 如果卸载程序存在，先执行卸载
+
+# 3. 如果卸载程序存在，先执行卸载
 if uninstaller and os.path.exists(uninstaller):
     print(f"【旧版本审计】检测到旧版本，正在流式执行卸载...")
-    uninstall_cmd = [uninstaller] if sys_os == "Windows" else ["sudo", uninstaller]
+    # 💡 关键改动：Linux/Darwin 下使用 sudo -E 确保原进程的环境变量透传给卸载程序
+    uninstall_cmd = [uninstaller] if sys_os == "Windows" else ["sudo", "-E", uninstaller]
     code = run_command_streaming(uninstall_cmd)
     if code == 0:
         print("旧版本卸载完毕。")
@@ -122,30 +126,36 @@ if uninstaller and os.path.exists(uninstaller):
 else:
     print("未检测到旧版本或无需卸载，跳过此步骤。")
 
-# 3. 下载对应的安装包
+
+# 4. 下载对应的安装包
 print(f"正在下载 ({sys_os}/{arch}): {url}")
 try:
     urllib.request.urlretrieve(url, filename)
     if sys_os != "Windows":
         os.chmod(filename, 0o755)
     print("下载完成。")
-
-    # 🚀 新增：下载完成后立刻计算 SHA-256 校验和
-    print(f"🔍 正在对下载的安装包进行安全审计...")
-    sha256_val = get_file_sha256(filename)
-    print(f"🔑 文件 [ {filename} ] SHA-256 值为:\n    👉 {sha256_val}\n")
-
 except Exception as e:
-    print(f"下载或校验失败: {e}", file=sys.stderr)
+    print(f"下载失败: {e}", file=sys.stderr)
     sys.exit(1)
 
-# 4. 流式执行安装程序
+
+# ==========================================================
+# 5. 计算并显示下载文件的 SHA-256 校验和
+# ==========================================================
+print("🔒 正在校验安装包哈希值...")
+sha256_result = calculate_sha256(filename)
+print(f"💾 文件名: {filename}")
+print(f"🔑 SHA-256: {sha256_result}\n")
+
+
+# 6. 流式执行安装程序
 print(f"正在以 [流式阻塞模式] 启动安装程序...")
 if sys_os == "Windows":
     # 完美注入你的非交互静默安装参数
     exec_cmd = [filename, "--silent", "--install-dir", r"C:\Program Files\Orbit"]
 else:
-    exec_cmd = ["sudo", f"./{filename}"]
+    # 💡 关键改动：Linux/Darwin 下使用 sudo -E 确保原进程的环境变量透传给安装程序
+    exec_cmd = ["sudo", "-E", f"./{filename}"]
 
 exit_code = run_command_streaming(exec_cmd)
 
