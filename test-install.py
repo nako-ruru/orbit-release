@@ -4,11 +4,40 @@ import subprocess
 import sys
 import threading
 import urllib.request
+import hashlib  # 🚀 新增：用于计算 SHA-256
 
 # 强行让 Windows 环境下的控制台支持 UTF-8 实时中文输出
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
+
+# ==================== 🚀 1. 脚本入口：展示关键环境变量 ====================
+print("====== 🔍 关键环境变量审计 ======")
+env_found = False
+for var_name in ["GITHUB_ACTIONS", "ORBIT_LOG_PATH"]:
+    val = os.environ.get(var_name)
+    if val:  # 存在且不为空值
+        print(f"  [ENV] {var_name} = {val}")
+        env_found = True
+if not env_found:
+    print("  (未检测到 GITHUB_ACTIONS 或 ORBIT_LOG_PATH 环境变量)")
+print("=================================\n")
+
+
+def get_file_sha256(filepath):
+    """
+    高效计算大文件的 SHA-256，避免一次性读入内存
+    """
+    sha256_hash = hashlib.sha256()
+    try:
+        with open(filepath, "rb") as f:
+            # 每次读取 4096 字节
+            for byte_block in iter(lambda: f.read(4096), b""):
+                sha256_hash.update(byte_block)
+        return sha256_hash.hexdigest()
+    except Exception as e:
+        return f"计算失败 ({e})"
+
 
 def run_command_streaming(cmd):
     """
@@ -35,7 +64,7 @@ def run_command_streaming(cmd):
                 pass
 
         t = threading.Thread(target=reader_thread)
-        t.daemon = True # 设为守护线程，主线程退出时它自动消亡
+        t.daemon = True  # 设为守护线程，主线程退出时它自动消亡
         t.start()
 
         # 主线程死等安装包/卸载包自身的 PID 退出，不关心它拉起的子进程
@@ -44,6 +73,7 @@ def run_command_streaming(cmd):
     except Exception as e:
         print(f"执行命令时发生异常: {e}", file=sys.stderr)
         return -1
+
 
 # 1. 自动识别系统与架构
 sys_os = platform.system()
@@ -99,8 +129,14 @@ try:
     if sys_os != "Windows":
         os.chmod(filename, 0o755)
     print("下载完成。")
+
+    # 🚀 新增：下载完成后立刻计算 SHA-256 校验和
+    print(f"🔍 正在对下载的安装包进行安全审计...")
+    sha256_val = get_file_sha256(filename)
+    print(f"🔑 文件 [ {filename} ] SHA-256 值为:\n    👉 {sha256_val}\n")
+
 except Exception as e:
-    print(f"下载失败: {e}", file=sys.stderr)
+    print(f"下载或校验失败: {e}", file=sys.stderr)
     sys.exit(1)
 
 # 4. 流式执行安装程序
