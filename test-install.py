@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 import urllib.request
+import urllib.parse
 import hashlib
 import time
 
@@ -14,39 +15,90 @@ if sys.platform == "win32":
 
 
 # ==========================================================
-# 1. 核心测试：重定向链路追踪器 (Redirect Tracer)
+# 1. 核心测试：手动重定向追踪器 (Manual Redirect Tracer)
 # ==========================================================
-class TraceRedirectHandler(urllib.request.HTTPRedirectHandler):
+def trace_redirects_manually(url, headers):
     """
-    自定义重定向处理器，用于捕获并向控制台实时打印重定向轨迹
+    手动追踪 HTTP 重定向（不带任何 Range 干扰），完全还原浏览器行为。
+    能完美通过 302 路由一直追踪到 GitHub (海外) 或 GitCode (境内) 的最终直连下载源。
     """
+    current_url = url
+    redirect_count = 0
+    max_redirects = 15
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        print(f"   🔄 [重定向触发] HTTP {code}: -> {newurl}")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+    # 构造一个阻止自动重定向的处理器
+    class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+            return None  # 返回 None 阻止 urllib 自动跳转，由我们手动捕获
+
+    opener = urllib.request.build_opener(NoRedirectHandler)
+
+    print("🛰️ 开始验证智能路由架构（手动追踪 302 链）...")
+    while redirect_count < max_redirects:
+        req = urllib.request.Request(current_url, headers=headers, method="GET")
+        try:
+            # 打开连接。如果不触发 302 异常，说明已经抵达最终的直连下载源
+            with opener.open(req, timeout=15) as resp:
+                print(f"\n🎯 架构验证成功！已抵达最终直连源 (HTTP {resp.status})")
+                print(f"   🔹 最终下载源: {current_url}")
+                return current_url
+        except urllib.error.HTTPError as e:
+            # 捕获重定向状态码
+            if e.code in (301, 302, 303, 307, 308):
+                new_url = e.headers.get("Location")
+                if not new_url:
+                    raise RuntimeError(f"收到重定向状态码 {e.code}，但未找到 Location 响应头")
+
+                # 兼容相对路径跳转
+                new_url = urllib.parse.urljoin(current_url, new_url)
+                print(f"   🔄 [重定向触发] HTTP {e.code}: -> {new_url}")
+                current_url = new_url
+                redirect_count += 1
+            else:
+                raise e
+
+    raise RuntimeError("达到了最大重定向次数限制")
 
 
-# 注册自定义的重定向追踪器，使其全局生效
-opener = urllib.request.build_opener(TraceRedirectHandler)
-urllib.request.install_opener(opener)
+def download_file(url, filename, headers):
+    """
+    对最终直连源进行标准高速流式下载。
+    因为此时的 URL 已经是 GitHub 或 GitCode 真实节点，无任何 1MB 掐断限制，无需分片，直接拉取。
+    """
+    print(f"\n📥 正在从最终直连源下载安装包...")
+    req = urllib.request.Request(url, headers=headers)
 
-# ==========================================================
-# 2. 入口环境变量检查与打印
-# ==========================================================
-print("=================== 初始环境检查 ===================")
-target_envs = ["GITHUB_ACTIONS", "ORBIT_LOG_PATH"]
-for var in target_envs:
-    val = os.environ.get(var)
-    if val is not None and val.strip() != "":
-        print(f"🌱 环境变量检测到: {var}={val}")
-    else:
-        print(f"⚠️ 环境变量未配置: {var}")
-print("====================================================\n")
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                total_size = int(response.getheader('Content-Length', 0))
+                downloaded = 0
+
+                with open(filename, 'wb') as f:
+                    while True:
+                        chunk = response.read(1024 * 128)  # 128KB 缓冲区
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+
+                        # 打印进度（每 2MB 打印一次，避免日志刷屏）
+                        if total_size and (downloaded % (2 * 1024 * 1024) < 128 * 1024 or downloaded == total_size):
+                            percent = (downloaded / total_size) * 100
+                            print(f"   进度: {percent:.1f}% ({downloaded}/{total_size} 字节)")
+
+                print("✅ 下载顺利完成！")
+                return True
+        except Exception as e:
+            print(f"   ⚠️ 下载遭遇抖动 (尝试 {attempt}/3): {e}，正在重试...")
+            time.sleep(2)
+
+    raise RuntimeError("💥 经历 3 次重试后，下载仍然失败。")
 
 
 def calculate_sha256(filepath):
     """
-    高效计算本地文件的 SHA-256 校验和（流式读取，内存安全）
+    高效计算本地文件的 SHA-256 校验和
     """
     sha256_hash = hashlib.sha256()
     try:
@@ -58,92 +110,9 @@ def calculate_sha256(filepath):
         return f"计算失败: {e}"
 
 
-def robust_download(url, filename, chunk_size=900 * 1024):
-    """
-    【兼容重定向与分片的高可靠下载器】
-    1. 首次请求时，允许通过自定义的 TraceRedirectHandler 自动完成重定向，并捕获最终文件的真实下载地址。
-    2. 针对最终下载地址（无论是 GitHub 还是 GitCode），进行 Range 分片下载，100% 免疫 1MB 掐断。
-    """
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
-
-    print(f"🛰️ 发起初始请求: {url}")
-    actual_url = url
-    total_size = 0
-
-    try:
-        # 发送一个 HEAD 或带有 Range 的请求，顺便完成重定向追踪
-        test_req = urllib.request.Request(url, headers={**headers, 'Range': 'bytes=0-0'})
-        with urllib.request.urlopen(test_req, timeout=15) as resp:
-            # 获取重定向之后的最终真实 URL
-            actual_url = resp.geturl()
-
-            if resp.status != 206:
-                print("⚠️ 警告: 最终存储服务器未返回 206 Partial Content，可能不支持分片下载。")
-                raise ValueError("No range support")
-
-            content_range = resp.getheader('Content-Range')
-            if content_range:
-                total_size = int(content_range.split('/')[-1])
-                print(f"📊 架构验证成功！")
-                print(f"   🔹 最终解析下载源: {actual_url}")
-                print(f"   🔹 文件总大小: {total_size} 字节 (~{total_size / (1024 * 1024):.2f} MB)")
-            else:
-                raise ValueError("未获取到 Content-Range 请求头")
-
-    except Exception as e:
-        print(f"⚠️ 分片探测遇到限制 ({e})，将尝试使用常规单流下载...")
-        # 降级方案
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as response:
-            with open(filename, 'wb') as f:
-                f.write(response.read())
-            print(f"✅ 下载完成（常规模式），最终源自: {response.geturl()}")
-        return True
-
-    # 3. 如果支持 Range，开始使用最终真实 URL 进行安全分片拼接
-    if os.path.exists(filename):
-        os.remove(filename)
-
-    start_byte = 0
-    part_num = 1
-
-    print(f"🧩 启动分片下载机制 (每片安全大小: {chunk_size // 1024} KB)...")
-    with open(filename, 'wb') as f:
-        while start_byte < total_size:
-            end_byte = min(start_byte + chunk_size - 1, total_size - 1)
-            range_str = f"bytes={start_byte}-{end_byte}"
-
-            # 单个分片的重试逻辑
-            success = False
-            for attempt in range(1, 4):
-                try:
-                    # 注意：这里直接向最终实际地址 actual_url 请求分片，避免重复触发重定向判定，提高效率
-                    req = urllib.request.Request(actual_url, headers={**headers, 'Range': range_str})
-                    with urllib.request.urlopen(req, timeout=20) as resp:
-                        data = resp.read()
-                        f.write(data)
-                        start_byte += len(data)
-                        print(f"   📥 已完成分片 {part_num:02d}: {range_str} ({len(data)} 字节)")
-                        success = True
-                        break
-                except Exception as e:
-                    print(f"   ⚠️ 分片 {part_num} 遭遇抖动 (尝试 {attempt}/3): {e}，正在重试...")
-                    time.sleep(2)
-
-            if not success:
-                raise RuntimeError(f"💥 分片 {part_num} 彻底下载失败，任务终止！")
-
-            part_num += 1
-
-    print("🎉 恭喜！所有分片下载并顺利拼接完成！")
-    return True
-
-
 def run_command_streaming(cmd):
     """
-    实时流式输出进程日志，且严格基于 PID 阻塞，绝不因主程序常驻而挂起 CI
+    实时流式输出进程日志
     """
     print(f"执行命令: {' '.join(cmd)}")
     try:
@@ -174,7 +143,19 @@ def run_command_streaming(cmd):
         return -1
 
 
+# ==========================================================
 # 2. 自动识别系统与架构
+# ==========================================================
+print("=================== 初始环境检查 ===================")
+target_envs = ["GITHUB_ACTIONS", "ORBIT_LOG_PATH"]
+for var in target_envs:
+    val = os.environ.get(var)
+    if val is not None and val.strip() != "":
+        print(f"🌱 环境变量检测到: {var}={val}")
+    else:
+        print(f"⚠️ 环境变量未配置: {var}")
+print("====================================================\n")
+
 sys_os = platform.system()
 arch = platform.machine().lower()
 
@@ -221,17 +202,26 @@ if uninstaller and os.path.exists(uninstaller):
 else:
     print("未检测到旧版本或无需卸载，跳过此步骤。")
 
-# 4. 安全下载安装包（调用追踪重定向下载器）
+# 4. 路由追踪与直连高速下载
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+}
+
 try:
-    robust_download(url, filename)
+    # 第一步：追踪得到最终不被拦截的 direct-download 真实地址
+    final_direct_url = trace_redirects_manually(url, headers)
+
+    # 第二步：直接下载
+    download_file(final_direct_url, filename, headers)
+
     if sys_os != "Windows":
         os.chmod(filename, 0o755)
 except Exception as e:
-    print(f"💥 下载失败并退出: {e}", file=sys.stderr)
+    print(f"💥 运行失败并退出: {e}", file=sys.stderr)
     sys.exit(1)
 
 # 5. 计算并显示下载文件的 SHA-256 校验和
-print("🔒 正在校验安装包哈希值...")
+print("\n🔒 正在校验安装包哈希值...")
 sha256_result = calculate_sha256(filename)
 print(f"💾 文件名: {filename}")
 print(f"🔑 SHA-256: {sha256_result}\n")
