@@ -3,9 +3,7 @@ import platform
 import subprocess
 import sys
 import threading
-import urllib.request
 import hashlib  # 导入哈希库
-import time  # 导入时间库用于重试等待
 
 # 强行让 Windows 环境下的控制台支持 UTF-8 实时中文输出
 if sys.platform == "win32":
@@ -40,59 +38,34 @@ def calculate_sha256(filepath):
         return f"计算失败: {e}"
 
 
-def robust_download(url, filename, retries=5, delay=3):
+def robust_download(url, filename):
     """
-    【核心黑科技】高可靠下载器。
-    1. 伪装 Chrome 浏览器 User-Agent，100% 绕过 CDN/WAF 针对 Python 脚本的 1MB 截断限制。
-    2. 支持最多 5 次自动退避重试，无惧 GitHub Actions 跨境网络波动。
-    3. 流式分块读写，防止内存溢出。
+    【终极对策】调用系统原生 curl 进行下载。
+    1. 彻底解决 Python TLS 指纹（JA3）被防火墙拦截导致的 1MB 斩断问题。
+    2. 利用 curl 自带的 -L (追踪重定向) 和 --retry (自动重试) 确保高可用。
     """
-    # 伪装成标准的 Windows Chrome 浏览器
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
+    print(f"📥 正在通过系统 curl 下载: {url}")
 
-    for attempt in range(1, retries + 1):
-        print(f"📥 正在下载 (尝试 {attempt}/{retries}): {url}")
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            # 设置 30 秒超时，防止单次卡死
-            with urllib.request.urlopen(req, timeout=30) as response:
-                content_length = response.getheader('Content-Length')
-                expected_size = int(content_length) if content_length else None
+    # 构造 curl 参数：
+    # -L: 自动跟踪重定向
+    # -f: HTTP 报错时直接失败退出
+    # --retry 5: 异常时自动重试 5 次
+    # --retry-delay 3: 每次重试等待 3 秒
+    # -o: 输出到指定文件
+    cmd = ["curl", "-L", "-f", "--retry", "5", "--retry-delay", "3", "-o", filename, url]
 
-                downloaded_size = 0
-                with open(filename, 'wb') as f:
-                    while True:
-                        # 每次读取 64KB
-                        chunk = response.read(1024 * 64)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        downloaded_size += len(chunk)
-
-                # 安全性校验：判断下载大小是否和服务器提供的一致
-                if expected_size is not None and downloaded_size < expected_size:
-                    raise IOError(f"下载文件不完整: 仅获取到 {downloaded_size}/{expected_size} 字节")
-
-                print("✅ 下载完成。")
-                return True
-
-        except Exception as e:
-            print(f"⚠️ 第 {attempt} 次下载尝试失败: {e}", file=sys.stderr)
-            # 如果文件已部分写入，清理掉防止 SHA-256 算错
-            if os.path.exists(filename):
-                try:
-                    os.remove(filename)
-                except:
-                    pass
-
-            if attempt < retries:
-                print(f"等待 {delay} 秒后重试...", file=sys.stderr)
-                time.sleep(delay)
-            else:
-                print("❌ 达到最大重试次数，下载彻底失败。", file=sys.stderr)
-                raise e
+    try:
+        # 在 Windows 下，如果是 python 执行，系统能自动找到 C:\Windows\System32\curl.exe
+        # shell=False 更加安全防止注入
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if result.returncode == 0:
+            print("✅ 下载完成。")
+            return True
+        else:
+            raise RuntimeError(f"curl 退出码非零 ({result.returncode})\n错误日志: {result.stderr}")
+    except Exception as e:
+        print(f"❌ curl 下载遭遇致命错误: {e}", file=sys.stderr)
+        raise e
 
 
 def run_command_streaming(cmd):
