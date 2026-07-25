@@ -1,19 +1,30 @@
 name: 纯自动化全平台测试
 
-on: [push, workflow_dispatch]
+on:
+  repository_dispatch:
+    types: [orbit_release_published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "手动测试的 Release Tag"
+        required: false
+        default: "main"
+  push:
+    branches:
+      - main
 
 env:
-  PYTHONUTF8: 1 # 全局开启 Python 的 UTF-8 强流模式
+  PYTHONUTF8: 1
 
 jobs:
-  # ==================== 任务一：多端自动化测试矩阵 ====================
   automation-test:
     name: 自动化测试 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # 🚀 核心魔法：使用 GitHub Actions 内置的三元逻辑语句
-    # 如果是 windows 开头，就赋 Windows 路径，否则赋 Linux/macOS 路径
     env:
       ORBIT_LOG_PATH: ${{ startsWith(matrix.os, 'windows') && 'C:\Orbit\orbit_boot.log' || '/tmp/orbit_boot.log' }}
+      RELEASE_TAG: ${{ github.event.client_payload.release_tag || inputs.release_tag || 'main' }}
+      DEPS_URL: ${{ github.event.client_payload.deps_url }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }} # 用于从私有 HF Dataset 下载测试版 Installer
 
     strategy:
       matrix:
@@ -30,14 +41,13 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
-      # 🎯 核心修正：在全平台网络都 100% 干净时，提前把 psutil 乱刀装好
       - name: 准备 Python 审计依赖
-        run: pip install psutil
+        run: pip install psutil requests
 
       - name: 1. 执行安装脚本
         run: python test-install.py
 
-      - name: 2. 休息 2 分钟等待程序拉起及稳定
+      - name: 2. 休息 15 秒等待程序稳定
         run: python -c "import time; time.sleep(15)"
 
       - name: 3. 初始化内网诊断链路
@@ -45,23 +55,18 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      # 🎯 新增步骤：强行杀掉 Tailscale 的前端 UI 进程，保留后台网络服务
-      - name: (仅Windows) 清理 Tailscale GUI 弹窗防止遮挡
+      - name: (仅Windows) 清理 Tailscale GUI 弹窗
         if: matrix.os == 'windows-latest'
         run: taskkill /f /im tailscale-ipn.exe || exit 0
         shell: cmd
 
       - name: 4. 分析测试结果
         run: python analyze-test-result.py
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
 
-  # ==================== 任务二：流水分支合并后的单次收尾 ====================
   finalize-verification:
     name: 自动化测试收尾与状态同步
-    needs: automation-test # 严格依赖：必须等上面三个系统全部成功亮绿勾，才会触发这里
+    needs: automation-test
     runs-on: ubuntu-latest
-
     steps:
       - name: 连接内网诊断链路
         uses: tailscale/github-action@v4
