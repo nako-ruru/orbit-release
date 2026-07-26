@@ -1,34 +1,80 @@
 name: 纯自动化全平台测试
 
 on:
-  repository_dispatch:
-    types: [orbit_release_published]
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "手动测试的 Release Tag"
+        description: "测试的 Release Tag (例如 v1.0.0)"
         required: false
         default: "main"
-  push:
-    branches:
-      - main
+      deps_url:
+        description: "Dependencies URL (留空则自动按 tag 拼接)"
+        required: false
+        default: ""
+      run_ubuntu:
+        description: "测试 Ubuntu?"
+        type: boolean
+        default: true
+      run_windows:
+        description: "测试 Windows?"
+        type: boolean
+        default: false
+      run_macos_x86:
+        description: "测试 macOS x86?"
+        type: boolean
+        default: false
+      run_macos_arm:
+        description: "测试 macOS ARM?"
+        type: boolean
+        default: false
 
 env:
   PYTHONUTF8: 1
 
 jobs:
+  # ==================== 任务一：动态计算测试矩阵 ====================
+  initializer:
+    name: 初始化测试矩阵
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_jobs: ${{ steps.set-matrix.outputs.has_jobs }}
+    steps:
+      - id: set-matrix
+        run: |
+          OS_LIST=()
+          if [ "${{ inputs.run_ubuntu }}" == "true" ]; then OS_LIST+=("\"ubuntu-latest\""); fi
+          if [ "${{ inputs.run_windows }}" == "true" ]; then OS_LIST+=("\"windows-latest\""); fi
+          if [ "${{ inputs.run_macos_x86 }}" == "true" ]; then OS_LIST+=("\"macos-13\""); fi
+          if [ "${{ inputs.run_macos_arm }}" == "true" ]; then OS_LIST+=("\"macos-14\""); fi
+
+          if [ ${#OS_LIST[@]} -eq 0 ]; then
+            echo "⚠️ 未选择任何测试平台，跳过后续测试。"
+            echo "has_jobs=false" >> $GITHUB_OUTPUT
+            echo "matrix=[]" >> $GITHUB_OUTPUT
+          else
+            JSON_ARRAY="[$(IFS=,; echo "${OS_LIST[*]}")]"
+            echo "has_jobs=true" >> $GITHUB_OUTPUT
+            echo "matrix=$JSON_ARRAY" >> $GITHUB_OUTPUT
+            echo "🎯 决定的测试矩阵: $JSON_ARRAY"
+          fi
+
+  # ==================== 任务二：多端自动化测试矩阵 ====================
   automation-test:
+    needs: initializer
+    if: needs.initializer.outputs.has_jobs == 'true'
     name: 自动化测试 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     env:
       ORBIT_LOG_PATH: ${{ startsWith(matrix.os, 'windows') && 'C:\Orbit\orbit_boot.log' || '/tmp/orbit_boot.log' }}
-      RELEASE_TAG: ${{ github.event.client_payload.release_tag || inputs.release_tag || 'main' }}
-      DEPS_URL: ${{ github.event.client_payload.deps_url }}
-      HF_TOKEN: ${{ secrets.HF_TOKEN }} # 用于从私有 HF Dataset 下载测试版 Installer
+      RELEASE_TAG: ${{ inputs.release_tag || 'main' }}
+      DEPS_URL: ${{ inputs.deps_url }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
     strategy:
+      fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: ${{ fromJson(needs.initializer.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -63,9 +109,11 @@ jobs:
       - name: 4. 分析测试结果
         run: python analyze-test-result.py
 
+  # ==================== 任务三：自动化测试收尾与状态同步 ====================
   finalize-verification:
+    needs: [initializer, automation-test]
+    if: always() && needs.initializer.outputs.has_jobs == 'true' && needs.automation-test.result == 'success'
     name: 自动化测试收尾与状态同步
-    needs: automation-test
     runs-on: ubuntu-latest
     steps:
       - name: 连接内网诊断链路
