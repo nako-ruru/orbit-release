@@ -13,10 +13,6 @@ on:
       commit_sha:
         description: "Repo A 构建的 Commit SHA"
         required: false
-      source_repo:
-        description: "Repo A 的仓库名 (例如 nako-ruru/orbit)"
-        required: false
-        default: "nako-ruru/orbit"
       draft_flag:
         description: "是否保持 Draft 状态"
         required: false
@@ -169,7 +165,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.MY_PAT_TOKEN }}
-          SOURCE_REPO: ${{ inputs.source_repo }}
+          SOURCE_REPO: "nako-ruru/orbit-client"
           TAG: ${{ inputs.release_tag }}
           REL_ID: ${{ inputs.release_id }}
           COMMIT_SHA: ${{ inputs.commit_sha }}
@@ -232,7 +228,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.MY_PAT_TOKEN }}
-          SOURCE_REPO: ${{ inputs.source_repo }}
+          SOURCE_REPO: "nako-ruru/orbit-client"
           REL_ID: ${{ inputs.release_id }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
