@@ -150,7 +150,7 @@ jobs:
   publish-release:
     needs: [finalize-verification]
     if: needs.finalize-verification.result == 'success'
-    name: a
+    name: 🎉 自动化测试通过: 在 Repo A 打 Tag 并发布
     runs-on: ubuntu-latest
     steps:
       - name: 执行打 Tag 和激活 Release
@@ -165,9 +165,15 @@ jobs:
           PRERELEASE: ${{ inputs.prerelease_flag }}
         run: |
           set -e
+          if [ -z "$GH_TOKEN" ]; then
+            echo "❌ 错误: Secrets 中未定义 MY_PAT_TOKEN 或 Token 为空！"
+            exit 1
+          fi
+
           if [ -n "$COMMIT_SHA" ] && [ -n "$TAG" ]; then
             echo "🏷️ 正在给 $SOURCE_REPO 的 Commit $COMMIT_SHA 打 Tag: $TAG ..."
-            curl -s -X POST \
+            # 加了 -f 参数，API 报错时直接中断脚本
+            curl -sf -X POST \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/$SOURCE_REPO/git/refs" \
@@ -176,7 +182,8 @@ jobs:
 
           if [ -n "$REL_ID" ]; then
             echo "🚀 正在更新 Repo A 的 Release 状态 (draft=$DRAFT, prerelease=$PRERELEASE)..."
-            curl -s -X PATCH \
+            # 加了 -f 参数
+            curl -sf -X PATCH \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/$SOURCE_REPO/releases/$REL_ID" \
@@ -190,7 +197,7 @@ jobs:
   reject-cleanup:
     needs: [automation-test]
     if: failure()
-    name: b
+    name: 🗑️ 测试失败/驳回: 删除 Repo A 的 Draft Release
     runs-on: ubuntu-latest
     steps:
       - name: 彻底删除 Repo A Draft
@@ -200,9 +207,14 @@ jobs:
           SOURCE_REPO: ${{ inputs.source_repo }}
           REL_ID: ${{ inputs.release_id }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "❌ 错误: Secrets 中未定义 MY_PAT_TOKEN 或 Token 为空！"
+            exit 1
+          fi
+
           if [ -n "$REL_ID" ]; then
             echo "🗑️ 自动化测试未通过，删掉 Repo A 的 Draft Release (ID: $REL_ID)..."
-            curl -s -X DELETE \
+            curl -sf -X DELETE \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/$SOURCE_REPO/releases/$REL_ID"
