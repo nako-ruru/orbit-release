@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "测试的 Release Tag (例如 v1.0.0)"
+        description: "测试的 Release Tag"
         required: true
+        default: "main"
       release_id:
         description: "Repo A 的 Release ID"
         required: false
@@ -144,26 +145,15 @@ jobs:
             --json '{"bindingId": "thumbsup-generate"}'
 
   # ====================================================
-  # 人工审核卡点步骤 (在此处暂停等待人工在 UI 界面 Approve/Reject)
+  # 人工审核与最终发布 (卡点/Approve/Reject 逻辑合一)
   # ====================================================
-  manual-approval:
+  manual-approval-and-publish:
     needs: finalize-verification
-    name: ⏸️ 人工审核卡点 (点击 Review Deployments 审批)
+    name: ⏸️ 人工审核卡点与状态处理
     runs-on: ubuntu-latest
-    environment: manual-approval # 绑定环境授权
+    environment: manual-approval # 在此等待人工审核点击 Approve 或 Reject
     steps:
-      - name: 审核通过确认
-        run: echo "✅ 人工审核已通过，准备发布和打 Tag！"
-
-  # ====================================================
-  # 审核通过后处理: 在 Repo A 打 Tag & 激活 Release
-  # ====================================================
-  publish-release:
-    needs: [manual-approval]
-    name: 🎉 审核通过: 在 Repo A 打 Tag 并发布
-    runs-on: ubuntu-latest
-    steps:
-      - name: 执行打 Tag 和激活 Release
+      - name: 审核通过: 在 Repo A 打 Tag 并更新 Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.MY_PAT_TOKEN }}
@@ -175,12 +165,14 @@ jobs:
           PRERELEASE: ${{ inputs.prerelease_flag }}
         run: |
           set -e
-          echo "🏷️ 正在给 $SOURCE_REPO 的 Commit $COMMIT_SHA 打 Tag: $TAG ..."
-          curl -s -X POST \
-            -H "Authorization: token $GH_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$SOURCE_REPO/git/refs" \
-            -d "{\"ref\": \"refs/tags/$TAG\", \"sha\": \"$COMMIT_SHA\"}"
+          if [ -n "$COMMIT_SHA" ] && [ -n "$TAG" ]; then
+            echo "🏷️ 正在给 $SOURCE_REPO 的 Commit $COMMIT_SHA 打 Tag: $TAG ..."
+            curl -s -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/$SOURCE_REPO/git/refs" \
+              -d "{\"ref\": \"refs/tags/$TAG\", \"sha\": \"$COMMIT_SHA\"}"
+          fi
 
           if [ -n "$REL_ID" ]; then
             echo "🚀 正在更新 Repo A 的 Release 状态 (draft=$DRAFT, prerelease=$PRERELEASE)..."
@@ -190,18 +182,10 @@ jobs:
               "https://api.github.com/repos/$SOURCE_REPO/releases/$REL_ID" \
               -d "{\"draft\": $DRAFT, \"prerelease\": $PRERELEASE}"
           fi
-          echo "✅ 全部发布逻辑成功落地！"
+          echo "✅ 审核通过，发布逻辑全部完成！"
 
-  # ====================================================
-  # 审核驳回后处理: 自动清理 Repo A 上的 Draft Release
-  # ====================================================
-  reject-cleanup:
-    needs: [manual-approval]
-    if: cancelled() || failure()
-    name: 🗑️ 审核驳回/取消: 删除 Repo A 的 Draft Release
-    runs-on: ubuntu-latest
-    steps:
-      - name: 彻底删除 Repo A Draft
+      - name: 审核驳回/取消: 彻底删除 Repo A Draft Release
+        if: cancelled() || failure()
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.MY_PAT_TOKEN }}
@@ -209,10 +193,10 @@ jobs:
           REL_ID: ${{ inputs.release_id }}
         run: |
           if [ -n "$REL_ID" ]; then
-            echo "🗑️ 审核未通过/已驳回，删掉 Repo A 的 Draft Release (ID: $REL_ID)..."
+            echo "🗑️ 检测到审核驳回/取消，正在删除 Repo A Draft Release (ID: $REL_ID)..."
             curl -s -X DELETE \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/$SOURCE_REPO/releases/$REL_ID"
-            echo "✅ 废弃草稿清理完毕！"
+            echo "✅ 废弃草稿已自动清理完毕！"
           fi
