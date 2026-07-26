@@ -1,23 +1,80 @@
 name: 纯自动化全平台测试
 
-on: [push, workflow_dispatch]
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "测试的 Release Tag (例如 v1.0.0)"
+        required: false
+        default: "main"
+      deps_url:
+        description: "Dependencies URL (留空则自动按 tag 拼接)"
+        required: false
+        default: ""
+      run_ubuntu:
+        description: "测试 Ubuntu?"
+        type: boolean
+        default: true
+      run_windows:
+        description: "测试 Windows?"
+        type: boolean
+        default: false
+      run_macos_x86:
+        description: "测试 macOS x86?"
+        type: boolean
+        default: false
+      run_macos_arm:
+        description: "测试 macOS ARM?"
+        type: boolean
+        default: false
 
 env:
-  PYTHONUTF8: 1 # 全局开启 Python 的 UTF-8 强流模式
+  PYTHONUTF8: 1
 
 jobs:
-  # ==================== 任务一：多端自动化测试矩阵 ====================
+  # ==================== 任务一：动态计算测试矩阵 ====================
+  initializer:
+    name: 初始化测试矩阵
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has_jobs: ${{ steps.set-matrix.outputs.has_jobs }}
+    steps:
+      - id: set-matrix
+        run: |
+          OS_LIST=()
+          if [ "${{ inputs.run_ubuntu }}" == "true" ]; then OS_LIST+=("\"ubuntu-latest\""); fi
+          if [ "${{ inputs.run_windows }}" == "true" ]; then OS_LIST+=("\"windows-latest\""); fi
+          if [ "${{ inputs.run_macos_x86 }}" == "true" ]; then OS_LIST+=("\"macos-13\""); fi
+          if [ "${{ inputs.run_macos_arm }}" == "true" ]; then OS_LIST+=("\"macos-14\""); fi
+
+          if [ ${#OS_LIST[@]} -eq 0 ]; then
+            echo "⚠️ 未选择任何测试平台，跳过后续测试。"
+            echo "has_jobs=false" >> $GITHUB_OUTPUT
+            echo "matrix=[]" >> $GITHUB_OUTPUT
+          else
+            JSON_ARRAY="[$(IFS=,; echo "${OS_LIST[*]}")]"
+            echo "has_jobs=true" >> $GITHUB_OUTPUT
+            echo "matrix=$JSON_ARRAY" >> $GITHUB_OUTPUT
+            echo "🎯 决定的测试矩阵: $JSON_ARRAY"
+          fi
+
+  # ==================== 任务二：多端自动化测试矩阵 ====================
   automation-test:
+    needs: initializer
+    if: needs.initializer.outputs.has_jobs == 'true'
     name: 自动化测试 (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # 🚀 核心魔法：使用 GitHub Actions 内置的三元逻辑语句
-    # 如果是 windows 开头，就赋 Windows 路径，否则赋 Linux/macOS 路径
     env:
       ORBIT_LOG_PATH: ${{ startsWith(matrix.os, 'windows') && 'C:\Orbit\orbit_boot.log' || '/tmp/orbit_boot.log' }}
+      RELEASE_TAG: ${{ inputs.release_tag || 'main' }}
+      DEPS_URL: ${{ inputs.deps_url }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
     strategy:
+      fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: ${{ fromJson(needs.initializer.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -30,14 +87,13 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
-      # 🎯 核心修正：在全平台网络都 100% 干净时，提前把 psutil 乱刀装好
       - name: 准备 Python 审计依赖
-        run: pip install psutil
+        run: pip install psutil requests
 
       - name: 1. 执行安装脚本
         run: python test-install.py
 
-      - name: 2. 休息 2 分钟等待程序拉起及稳定
+      - name: 2. 休息 15 秒等待程序稳定
         run: python -c "import time; time.sleep(15)"
 
       - name: 3. 初始化内网诊断链路
@@ -45,23 +101,20 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      # 🎯 新增步骤：强行杀掉 Tailscale 的前端 UI 进程，保留后台网络服务
-      - name: (仅Windows) 清理 Tailscale GUI 弹窗防止遮挡
+      - name: (仅Windows) 清理 Tailscale GUI 弹窗
         if: matrix.os == 'windows-latest'
         run: taskkill /f /im tailscale-ipn.exe || exit 0
         shell: cmd
 
       - name: 4. 分析测试结果
         run: python analyze-test-result.py
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
 
-  # ==================== 任务二：流水分支合并后的单次收尾 ====================
+  # ==================== 任务三：自动化测试收尾与状态同步 ====================
   finalize-verification:
+    needs: [initializer, automation-test]
+    if: always() && needs.initializer.outputs.has_jobs == 'true' && needs.automation-test.result == 'success'
     name: 自动化测试收尾与状态同步
-    needs: automation-test # 严格依赖：必须等上面三个系统全部成功亮绿勾，才会触发这里
     runs-on: ubuntu-latest
-
     steps:
       - name: 连接内网诊断链路
         uses: tailscale/github-action@v4
