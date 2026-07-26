@@ -150,7 +150,7 @@ jobs:
   publish-release:
     needs: [finalize-verification]
     if: needs.finalize-verification.result == 'success'
-    name: 🎉 自动化测试通过: 在 Repo A 打 Tag 并发布
+    name: 🎉 自动化测试通过：在 Repo A 打 Tag 并发布
     runs-on: ubuntu-latest
     steps:
       - name: 执行打 Tag 和激活 Release
@@ -197,7 +197,7 @@ jobs:
   reject-cleanup:
     needs: [automation-test]
     if: failure()
-    name: 🗑️ 测试失败/驳回: 删除 Repo A 的 Draft Release
+    name: 🗑️ 测试失败/驳回：删除 Repo A 的 Draft Release
     runs-on: ubuntu-latest
     steps:
       - name: 彻底删除 Repo A Draft
