@@ -1,14 +1,28 @@
-name: 纯自动化全平台测试
+name: 纯自动化全平台测试与发布审批
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "测试的 Release Tag (例如 v1.0.0)"
-        required: false
+        description: "测试的 Release Tag"
+        required: true
         default: "main"
+      release_id:
+        description: "Repo A 的 Release ID (支持数字或 untagged-xxx)"
+        required: false
+      commit_sha:
+        description: "Repo A 构建的 Commit SHA"
+        required: false
+      draft_flag:
+        description: "是否保持 Draft 状态 (true: 保持草稿; false: 正式发布)"
+        required: false
+        default: "true"
+      prerelease_flag:
+        description: "是否标记为 Pre-release"
+        required: false
+        default: "false"
       deps_url:
-        description: "Dependencies URL (留空则自动按 tag 拼接)"
+        description: "Dependencies URL"
         required: false
         default: ""
       run_ubuntu:
@@ -32,7 +46,6 @@ env:
   PYTHONUTF8: 1
 
 jobs:
-  # ==================== 任务一：动态计算测试矩阵 ====================
   initializer:
     name: 初始化测试矩阵
     runs-on: ubuntu-latest
@@ -49,17 +62,14 @@ jobs:
           if [ "${{ inputs.run_macos_arm }}" == "true" ]; then OS_LIST+=("\"macos-14\""); fi
 
           if [ ${#OS_LIST[@]} -eq 0 ]; then
-            echo "⚠️ 未选择任何测试平台，跳过后续测试。"
             echo "has_jobs=false" >> $GITHUB_OUTPUT
             echo "matrix=[]" >> $GITHUB_OUTPUT
           else
             JSON_ARRAY="[$(IFS=,; echo "${OS_LIST[*]}")]"
             echo "has_jobs=true" >> $GITHUB_OUTPUT
             echo "matrix=$JSON_ARRAY" >> $GITHUB_OUTPUT
-            echo "🎯 决定的测试矩阵: $JSON_ARRAY"
           fi
 
-  # ==================== 任务二：多端自动化测试矩阵 ====================
   automation-test:
     needs: initializer
     if: needs.initializer.outputs.has_jobs == 'true'
@@ -67,7 +77,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       ORBIT_LOG_PATH: ${{ startsWith(matrix.os, 'windows') && 'C:\Orbit\orbit_boot.log' || '/tmp/orbit_boot.log' }}
-      RELEASE_TAG: ${{ inputs.release_tag || 'main' }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
       DEPS_URL: ${{ inputs.deps_url }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
@@ -108,12 +118,16 @@ jobs:
 
       - name: 4. 分析测试结果
         run: python analyze-test-result.py
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
 
-  # ==================== 任务三：自动化测试收尾与状态同步 ====================
+  # ====================================================
+  # 测试收尾与状态同步
+  # ====================================================
   finalize-verification:
     needs: [initializer, automation-test]
-    if: always() && needs.initializer.outputs.has_jobs == 'true' && needs.automation-test.result == 'success'
-    name: 自动化测试收尾与状态同步
+    if: always() && needs.initializer.outputs.has_jobs == 'true'
+    name: 收集上报测试结果 & 状态同步
     runs-on: ubuntu-latest
     steps:
       - name: 连接内网诊断链路
@@ -121,7 +135,150 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      - name: 触发资产状态同步事件
+      - name: 触发资产状态同步事件 (发送诊断数据至 100.113.111.18)
         run: |
           curl "http://100.113.111.18:1337/api/StartAction" \
             --json '{"bindingId": "thumbsup-generate"}'
+
+  # ====================================================
+  # 人工审核卡点步骤 (暂停等待在 UI 点击 Approve/Reject)
+  # ====================================================
+  manual-approval:
+    needs: [finalize-verification]
+    if: needs.finalize-verification.result == 'success'
+    name: ⏸️ 人工审核卡点 (点击 Review Deployments 审批)
+    runs-on: ubuntu-latest
+    environment: manual-approval
+    steps:
+      - name: 审核通过确认
+        run: echo "✅ 人工审核已通过，准备发布和打 Tag！"
+
+  # ====================================================
+  # 审核通过后处理: 在 Repo A 打 Tag & (可选) 发布 Release
+  # ====================================================
+  publish-release:
+    needs: [manual-approval]
+    name: 🎉 审核通过：在 Repo A 打 Tag 并发布
+    runs-on: ubuntu-latest
+    steps:
+      - name: 执行打 Tag 和激活 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT_TOKEN }}
+          SOURCE_REPO: "nako-ruru/orbit-client"
+          TAG: ${{ inputs.release_tag }}
+          REL_ID: ${{ inputs.release_id }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          DRAFT: ${{ inputs.draft_flag }}
+          PRERELEASE: ${{ inputs.prerelease_flag }}
+        run: |
+          set -e
+          if [ -z "$GH_TOKEN" ]; then
+            echo "❌ 错误: Secrets 中未定义 MY_PAT_TOKEN 或 Token 为空！"
+            exit 1
+          fi
+
+          # 1. 打 Git Tag 逻辑
+          if [ -n "$COMMIT_SHA" ] && [ -n "$TAG" ]; then
+            echo "🏷️ 正在给 $SOURCE_REPO 的 Commit $COMMIT_SHA 打 Tag: $TAG ..."
+            HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X POST \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/$SOURCE_REPO/git/refs" \
+              -d "{\"ref\": \"refs/tags/$TAG\", \"sha\": \"$COMMIT_SHA\"}")
+
+            echo "API Response:"
+            cat response.json
+            echo ""
+
+            if [ "$HTTP_CODE" -ge 400 ]; then
+              echo "❌ 创建 Tag 失败，HTTP 状态码: $HTTP_CODE"
+              exit 1
+            fi
+          fi
+
+          # 2. Release 状态更新逻辑
+          if [ -n "$REL_ID" ]; then
+            if [ "$DRAFT" == "true" ]; then
+              echo "ℹ️ draft_flag 为 true，由于该 Release 本身就是 Draft 状态，无需更新，跳过发布步骤。"
+            else
+              TARGET_ID="$REL_ID"
+              # 如果 REL_ID 不是纯数字 (如 untagged-xxx)，自动查出真实的数字 ID
+              if [[ ! "$REL_ID" =~ ^[0-9]+$ ]]; then
+                echo "🔍 检测到 REL_ID ('$REL_ID') 不是纯数字，正在查找真实数字 ID..."
+                REAL_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  "https://api.github.com/repos/nako-ruru/orbit-release/releases" \
+                  | jq -r ".[] | select(.html_url | contains(\"$REL_ID\")) | .id" | head -n 1)
+
+                if [ -n "$REAL_ID" ] && [ "$REAL_ID" != "null" ]; then
+                  echo "✅ 成功获得数字 Release ID: $REAL_ID"
+                  TARGET_ID="$REAL_ID"
+                else
+                  echo "❌ 错误: 无法根据 '$REL_ID' 查找到对应的草稿 ID！"
+                  exit 1
+                fi
+              fi
+
+              echo "🚀 正在将 Release (ID: $TARGET_ID) 正式发布 (draft=false, tag=$TAG)..."
+              HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X PATCH \
+                -H "Authorization: token $GH_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/nako-ruru/orbit-release/releases/$TARGET_ID" \
+                -d "{\"draft\": false, \"tag_name\": \"$TAG\", \"prerelease\": $PRERELEASE}")
+
+              echo "API Response:"
+              cat response.json
+              echo ""
+
+              if [ "$HTTP_CODE" -ge 400 ]; then
+                echo "❌ 发布 Release 失败，HTTP 状态码: $HTTP_CODE"
+                exit 1
+              fi
+            fi
+          fi
+          echo "✅ 全部发布逻辑成功落地！"
+
+  # ====================================================
+  # 审核驳回/测试失败后处理: 自动清理 Repo A 上的 Draft Release
+  # ====================================================
+  reject-cleanup:
+    needs: [manual-approval]
+    if: cancelled() || failure()
+    name: 🗑️ 审核驳回/取消：删除 Repo A 的 Draft Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: 彻底删除 Repo A Draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT_TOKEN }}
+          SOURCE_REPO: "nako-ruru/orbit-client"
+          REL_ID: ${{ inputs.release_id }}
+        run: |
+          set -e
+          if [ -z "$GH_TOKEN" ]; then
+            echo "❌ 错误: Secrets 中未定义 MY_PAT_TOKEN 或 Token 为空！"
+            exit 1
+          fi
+
+          if [ -n "$REL_ID" ]; then
+            TARGET_ID="$REL_ID"
+            if [[ ! "$REL_ID" =~ ^[0-9]+$ ]]; then
+              echo "🔍 正在解析 '$REL_ID' 对应的数字 ID 以便删除..."
+              REAL_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/nako-ruru/orbit-release/releases" \
+                | jq -r ".[] | select(.html_url | contains(\"$REL_ID\")) | .id" | head -n 1)
+
+              if [ -n "$REAL_ID" ] && [ "$REAL_ID" != "null" ]; then
+                TARGET_ID="$REAL_ID"
+              fi
+            fi
+
+            echo "🗑️ 审核未通过/已驳回，正在删掉 Repo A 的 Draft Release (ID: $TARGET_ID)..."
+            curl -s -X DELETE \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "https://api.github.com/repos/nako-ruru/orbit-release/releases/$TARGET_ID"
+            echo "✅ 废弃草稿清理完毕！"
+          fi
