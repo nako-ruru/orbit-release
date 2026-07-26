@@ -145,15 +145,15 @@ jobs:
             --json '{"bindingId": "thumbsup-generate"}'
 
   # ====================================================
-  # 人工审核与最终发布 (卡点/Approve/Reject 逻辑合一)
+  # 审核通过后处理: 在 Repo A 打 Tag & 激活 Release
   # ====================================================
-  manual-approval-and-publish:
-    needs: finalize-verification
-    name: ⏸️ 人工审核卡点与状态处理
+  publish-release:
+    needs: [finalize-verification]
+    if: needs.finalize-verification.result == 'success'
+    name: a
     runs-on: ubuntu-latest
-    environment: manual-approval # 在此等待人工审核点击 Approve 或 Reject
     steps:
-      - name: 审核通过: 在 Repo A 打 Tag 并更新 Release
+      - name: 执行打 Tag 和激活 Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.MY_PAT_TOKEN }}
@@ -182,10 +182,18 @@ jobs:
               "https://api.github.com/repos/$SOURCE_REPO/releases/$REL_ID" \
               -d "{\"draft\": $DRAFT, \"prerelease\": $PRERELEASE}"
           fi
-          echo "✅ 审核通过，发布逻辑全部完成！"
+          echo "✅ 全部发布逻辑成功落地！"
 
-      - name: 审核驳回/取消: 彻底删除 Repo A Draft Release
-        if: cancelled() || failure()
+  # ====================================================
+  # 测试失败/驳回后处理: 自动清理 Repo A 上的 Draft Release
+  # ====================================================
+  reject-cleanup:
+    needs: [automation-test]
+    if: failure()
+    name: b
+    runs-on: ubuntu-latest
+    steps:
+      - name: 彻底删除 Repo A Draft
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.MY_PAT_TOKEN }}
@@ -193,10 +201,10 @@ jobs:
           REL_ID: ${{ inputs.release_id }}
         run: |
           if [ -n "$REL_ID" ]; then
-            echo "🗑️ 检测到审核驳回/取消，正在删除 Repo A Draft Release (ID: $REL_ID)..."
+            echo "🗑️ 自动化测试未通过，删掉 Repo A 的 Draft Release (ID: $REL_ID)..."
             curl -s -X DELETE \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/$SOURCE_REPO/releases/$REL_ID"
-            echo "✅ 废弃草稿已自动清理完毕！"
+            echo "✅ 废弃草稿清理完毕！"
           fi
