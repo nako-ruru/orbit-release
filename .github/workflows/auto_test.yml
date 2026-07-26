@@ -8,13 +8,13 @@ on:
         required: true
         default: "main"
       release_id:
-        description: "Repo A 的 Release ID"
+        description: "Repo A 的 Release ID (支持数字或 untagged-xxx)"
         required: false
       commit_sha:
         description: "Repo A 构建的 Commit SHA"
         required: false
       draft_flag:
-        description: "是否保持 Draft 状态"
+        description: "是否保持 Draft 状态 (true: 保持草稿; false: 正式发布)"
         required: false
         default: "true"
       prerelease_flag:
@@ -154,7 +154,7 @@ jobs:
         run: echo "✅ 人工审核已通过，准备发布和打 Tag！"
 
   # ====================================================
-  # 审核通过后处理: 在 Repo A 打 Tag & 激活 Release
+  # 审核通过后处理: 在 Repo A 打 Tag & (可选) 发布 Release
   # ====================================================
   publish-release:
     needs: [manual-approval]
@@ -178,6 +178,7 @@ jobs:
             exit 1
           fi
 
+          # 1. 打 Git Tag 逻辑
           if [ -n "$COMMIT_SHA" ] && [ -n "$TAG" ]; then
             echo "🏷️ 正在给 $SOURCE_REPO 的 Commit $COMMIT_SHA 打 Tag: $TAG ..."
             HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X POST \
@@ -196,21 +197,44 @@ jobs:
             fi
           fi
 
+          # 2. Release 状态更新逻辑
           if [ -n "$REL_ID" ]; then
-            echo "🚀 正在更新 Repo A 的 Release 状态 (draft=$DRAFT, prerelease=$PRERELEASE)..."
-            HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X PATCH \
-              -H "Authorization: token $GH_TOKEN" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/nako-ruru/orbit-release/releases/$REL_ID" \
-              -d "{\"draft\": $DRAFT, \"prerelease\": $PRERELEASE}")
+            if [ "$DRAFT" == "true" ]; then
+              echo "ℹ️ draft_flag 为 true，由于该 Release 本身就是 Draft 状态，无需更新，跳过发布步骤。"
+            else
+              TARGET_ID="$REL_ID"
+              # 如果 REL_ID 不是纯数字 (如 untagged-xxx)，自动查出真实的数字 ID
+              if [[ ! "$REL_ID" =~ ^[0-9]+$ ]]; then
+                echo "🔍 检测到 REL_ID ('$REL_ID') 不是纯数字，正在查找真实数字 ID..."
+                REAL_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  "https://api.github.com/repos/nako-ruru/orbit-release/releases" \
+                  | jq -r ".[] | select(.html_url | contains(\"$REL_ID\")) | .id" | head -n 1)
 
-            echo "API Response:"
-            cat response.json
-            echo ""
+                if [ -n "$REAL_ID" ] && [ "$REAL_ID" != "null" ]; then
+                  echo "✅ 成功获得数字 Release ID: $REAL_ID"
+                  TARGET_ID="$REAL_ID"
+                else
+                  echo "❌ 错误: 无法根据 '$REL_ID' 查找到对应的草稿 ID！"
+                  exit 1
+                fi
+              fi
 
-            if [ "$HTTP_CODE" -ge 400 ]; then
-              echo "❌ 更新 Release 状态失败，HTTP 状态码: $HTTP_CODE"
-              exit 1
+              echo "🚀 正在将 Release (ID: $TARGET_ID) 正式发布 (draft=false, tag=$TAG)..."
+              HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X PATCH \
+                -H "Authorization: token $GH_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/nako-ruru/orbit-release/releases/$TARGET_ID" \
+                -d "{\"draft\": false, \"tag_name\": \"$TAG\", \"prerelease\": $PRERELEASE}")
+
+              echo "API Response:"
+              cat response.json
+              echo ""
+
+              if [ "$HTTP_CODE" -ge 400 ]; then
+                echo "❌ 发布 Release 失败，HTTP 状态码: $HTTP_CODE"
+                exit 1
+              fi
             fi
           fi
           echo "✅ 全部发布逻辑成功落地！"
@@ -231,16 +255,30 @@ jobs:
           SOURCE_REPO: "nako-ruru/orbit-client"
           REL_ID: ${{ inputs.release_id }}
         run: |
+          set -e
           if [ -z "$GH_TOKEN" ]; then
             echo "❌ 错误: Secrets 中未定义 MY_PAT_TOKEN 或 Token 为空！"
             exit 1
           fi
 
           if [ -n "$REL_ID" ]; then
-            echo "🗑️ 审核未通过/已驳回，删掉 Repo A 的 Draft Release (ID: $REL_ID)..."
+            TARGET_ID="$REL_ID"
+            if [[ ! "$REL_ID" =~ ^[0-9]+$ ]]; then
+              echo "🔍 正在解析 '$REL_ID' 对应的数字 ID 以便删除..."
+              REAL_ID=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/nako-ruru/orbit-release/releases" \
+                | jq -r ".[] | select(.html_url | contains(\"$REL_ID\")) | .id" | head -n 1)
+
+              if [ -n "$REAL_ID" ] && [ "$REAL_ID" != "null" ]; then
+                TARGET_ID="$REAL_ID"
+              fi
+            fi
+
+            echo "🗑️ 审核未通过/已驳回，正在删掉 Repo A 的 Draft Release (ID: $TARGET_ID)..."
             curl -s -X DELETE \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/$SOURCE_REPO/releases/$REL_ID"
+              "https://api.github.com/repos/nako-ruru/orbit-release/releases/$TARGET_ID"
             echo "✅ 废弃草稿清理完毕！"
           fi
