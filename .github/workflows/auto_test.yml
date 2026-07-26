@@ -126,7 +126,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
 
   # ====================================================
-  # 关键步骤 4: 测试收尾与状态同步 (收集上报测试结果)
+  # 测试收尾与状态同步
   # ====================================================
   finalize-verification:
     needs: [initializer, automation-test]
@@ -145,12 +145,24 @@ jobs:
             --json '{"bindingId": "thumbsup-generate"}'
 
   # ====================================================
+  # 人工审核卡点步骤 (暂停等待在 UI 点击 Approve/Reject)
+  # ====================================================
+  manual-approval:
+    needs: [finalize-verification]
+    if: needs.finalize-verification.result == 'success'
+    name: ⏸️ 人工审核卡点 (点击 Review Deployments 审批)
+    runs-on: ubuntu-latest
+    environment: manual-approval
+    steps:
+      - name: 审核通过确认
+        run: echo "✅ 人工审核已通过，准备发布和打 Tag！"
+
+  # ====================================================
   # 审核通过后处理: 在 Repo A 打 Tag & 激活 Release
   # ====================================================
   publish-release:
-    needs: [finalize-verification]
-    if: needs.finalize-verification.result == 'success'
-    name: 🎉 自动化测试通过：在 Repo A 打 Tag 并发布
+    needs: [manual-approval]
+    name: 🎉 审核通过：在 Repo A 打 Tag 并发布
     runs-on: ubuntu-latest
     steps:
       - name: 执行打 Tag 和激活 Release
@@ -172,32 +184,48 @@ jobs:
 
           if [ -n "$COMMIT_SHA" ] && [ -n "$TAG" ]; then
             echo "🏷️ 正在给 $SOURCE_REPO 的 Commit $COMMIT_SHA 打 Tag: $TAG ..."
-            # 加了 -f 参数，API 报错时直接中断脚本
-            curl -sf -X POST \
+            HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X POST \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/$SOURCE_REPO/git/refs" \
-              -d "{\"ref\": \"refs/tags/$TAG\", \"sha\": \"$COMMIT_SHA\"}"
+              -d "{\"ref\": \"refs/tags/$TAG\", \"sha\": \"$COMMIT_SHA\"}")
+
+            echo "API Response:"
+            cat response.json
+            echo ""
+
+            if [ "$HTTP_CODE" -ge 400 ]; then
+              echo "❌ 创建 Tag 失败，HTTP 状态码: $HTTP_CODE"
+              exit 1
+            fi
           fi
 
           if [ -n "$REL_ID" ]; then
             echo "🚀 正在更新 Repo A 的 Release 状态 (draft=$DRAFT, prerelease=$PRERELEASE)..."
-            # 加了 -f 参数
-            curl -sf -X PATCH \
+            HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X PATCH \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/$SOURCE_REPO/releases/$REL_ID" \
-              -d "{\"draft\": $DRAFT, \"prerelease\": $PRERELEASE}"
+              -d "{\"draft\": $DRAFT, \"prerelease\": $PRERELEASE}")
+
+            echo "API Response:"
+            cat response.json
+            echo ""
+
+            if [ "$HTTP_CODE" -ge 400 ]; then
+              echo "❌ 更新 Release 状态失败，HTTP 状态码: $HTTP_CODE"
+              exit 1
+            fi
           fi
           echo "✅ 全部发布逻辑成功落地！"
 
   # ====================================================
-  # 测试失败/驳回后处理: 自动清理 Repo A 上的 Draft Release
+  # 审核驳回/测试失败后处理: 自动清理 Repo A 上的 Draft Release
   # ====================================================
   reject-cleanup:
-    needs: [automation-test]
-    if: failure()
-    name: 🗑️ 测试失败/驳回：删除 Repo A 的 Draft Release
+    needs: [manual-approval]
+    if: cancelled() || failure()
+    name: 🗑️ 审核驳回/取消：删除 Repo A 的 Draft Release
     runs-on: ubuntu-latest
     steps:
       - name: 彻底删除 Repo A Draft
@@ -213,8 +241,8 @@ jobs:
           fi
 
           if [ -n "$REL_ID" ]; then
-            echo "🗑️ 自动化测试未通过，删掉 Repo A 的 Draft Release (ID: $REL_ID)..."
-            curl -sf -X DELETE \
+            echo "🗑️ 审核未通过/已驳回，删掉 Repo A 的 Draft Release (ID: $REL_ID)..."
+            curl -s -X DELETE \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
               "https://api.github.com/repos/$SOURCE_REPO/releases/$REL_ID"
