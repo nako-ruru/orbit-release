@@ -201,7 +201,7 @@ jobs:
             HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X PATCH \
               -H "Authorization: token $GH_TOKEN" \
               -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/$SOURCE_REPO/releases/$REL_ID" \
+              "https://api.github.com/repos/nako-ruru/orbit-release/releases/$REL_ID" \
               -d "{\"draft\": $DRAFT, \"prerelease\": $PRERELEASE}")
 
             echo "API Response:"
