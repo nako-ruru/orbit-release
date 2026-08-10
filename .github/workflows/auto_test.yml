@@ -33,8 +33,12 @@ on:
         description: "测试 Windows?"
         type: boolean
         default: false
+      run_macos_x86:
+        description: "测试 macOS x86 (基于 Rosetta 转译)?"
+        type: boolean
+        default: false
       run_macos_arm:
-        description: "测试 macOS (Apple Silicon + Rosetta x86)?"
+        description: "测试 macOS ARM?"
         type: boolean
         default: false
 
@@ -54,6 +58,8 @@ jobs:
           OS_LIST=()
           if [ "${{ inputs.run_ubuntu }}" == "true" ]; then OS_LIST+=("\"ubuntu-latest\""); fi
           if [ "${{ inputs.run_windows }}" == "true" ]; then OS_LIST+=("\"windows-latest\""); fi
+          # 替换掉失效的 macos-13，改用 macos-latest (Rosetta 自动兼容 x86，不卡顿)
+          if [ "${{ inputs.run_macos_x86 }}" == "true" ]; then OS_LIST+=("\"macos-latest\""); fi
           if [ "${{ inputs.run_macos_arm }}" == "true" ]; then OS_LIST+=("\"macos-14\""); fi
 
           if [ ${#OS_LIST[@]} -eq 0 ]; then
